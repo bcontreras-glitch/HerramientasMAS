@@ -1,0 +1,154 @@
+# Despliegue con Docker + MySQL (servidor de empresa)
+
+Stack en un solo servidor (on‑premise / VM):
+
+| Servicio   | Dockerfile / imagen | Puerto por defecto |
+|------------|---------------------|--------------------|
+| `frontend` | `frontend/Dockerfile` (Next.js standalone) | 3000 |
+| `backend`  | `Dockerfile` (raíz, FastAPI + FFmpeg) | 8000 |
+| `db`       | MySQL 8.4 | 3306 |
+
+El navegador entra por el **frontend** (`http://servidor:3000` o tu dominio). Las rutas `/api/*` se proxifican al backend dentro de la red Docker (`BACKEND_URL=http://backend:8000`).
+
+> **Nota:** el Compresor MP4 corre **dentro del backend** (FFmpeg en la imagen + plantilla ZIP). Los videos de entrada/salida viven en volúmenes Docker (`compresor_input` / `compresor_output`). En la UI usa **Descargar ZIP** para bajar el paquete.
+
+## Arranque rápido (empresa)
+
+```bash
+# En la raíz del repo
+cp .env.docker.example .env
+# Editar .env: contraseñas, JWT, PUBLIC_FRONTEND_URL, CORS_ORIGINS
+
+docker compose up -d --build
+
+# Health
+curl http://localhost:8000/api/health
+# App: http://localhost:3000  (usuario admin + BOOTSTRAP_ADMIN_PASSWORD)
+```
+
+## 1. Requisitos
+
+- Docker Engine + Docker Compose v2
+- Archivo `cursos bex Moodle.xlsx` en la raíz del repo (se copia a la imagen del backend)
+- Carpeta `compresor_video/carpeta para el video` (plantilla del compresor)
+
+## 2. Configurar variables
+
+```bash
+cp .env.docker.example .env
+```
+
+Edita `.env` y define al menos:
+
+- `MYSQL_ROOT_PASSWORD`, `MYSQL_PASSWORD` (sin caracteres `@ : / # ?` si puedes evitarlos)
+- `JWT_SECRET_KEY` y `APP_ENCRYPTION_KEY` (p. ej. `openssl rand -hex 32`)
+- `PUBLIC_FRONTEND_URL` y `CORS_ORIGINS` con la URL **exacta** de acceso (incluye puerto si no es 80/443). Ejemplo sin HTTPS: `http://IP:3001`
+- `BOOTSTRAP_ADMIN_PASSWORD` solo para el **primer** arranque
+- Si entran por **HTTP** (sin candado), `PUBLIC_FRONTEND_URL` debe empezar por `http://` para que la cookie de sesión funcione. Si ves «Error obteniendo usuario» tras login, suele ser cookie `Secure` con HTTP: corrige la URL pública y recrea el backend (`docker compose up -d --build backend`)
+
+## 3. Levantar
+
+```bash
+docker compose up -d --build
+```
+
+Comprobar:
+
+```bash
+docker compose ps
+curl http://localhost:8000/api/health
+```
+
+Abrir: `http://localhost:3000` (o tu dominio).
+
+Login inicial: usuario `admin` + la clave de `BOOTSTRAP_ADMIN_PASSWORD`.
+
+Después del primer login: cambia la contraseña del admin y **quita** `BOOTSTRAP_ADMIN_PASSWORD` del `.env`, luego `docker compose up -d` de nuevo.
+
+## 4. MySQL externo (opcional)
+
+Si ya tienes un MySQL en el servidor, comenta o elimina el servicio `db` del compose y define en el backend (vía `.env` / environment):
+
+```env
+MYSQL_HOST=tu-mysql-host
+MYSQL_PORT=3306
+MYSQL_DATABASE=herramientas
+MYSQL_USER=herramientas
+MYSQL_PASSWORD=tu_password
+```
+
+O una sola URL:
+
+```env
+DATABASE_URL=mysql+pymysql://usuario:password@host:3306/herramientas?charset=utf8mb4
+```
+
+También vale el esquema `mysql://...` (el backend lo convierte a `mysql+pymysql://`).
+
+## 5. HTTPS / proxy inverso
+
+Delante de Docker (Nginx, Caddy, Traefik) apunta el dominio al puerto del **frontend** (3000).
+
+Ejemplo Nginx:
+
+```nginx
+location / {
+  proxy_pass http://127.0.0.1:3000;
+  proxy_http_version 1.1;
+  proxy_set_header Host $host;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  proxy_set_header X-Forwarded-Proto $scheme;
+  client_max_body_size 100m;
+}
+```
+
+Ajusta `PUBLIC_FRONTEND_URL` / `CORS_ORIGINS` a `https://tu-dominio.com`.
+
+## 6. Comandos útiles
+
+```bash
+docker compose logs -f backend
+docker compose logs -f frontend
+docker compose down          # para contenedores (conserva datos MySQL)
+docker compose down -v       # ¡borra el volumen mysql_data!
+```
+
+## 7. Persistencia y migración de datos locales
+
+### Qué se conserva entre rebuilds
+
+| Volumen | Qué guarda |
+|---------|------------|
+| `mysql_data` | Toda la BD (usuarios, permisos, perfiles, capacitaciones, etc.) |
+| `compresor_input` / `compresor_output` / `compresor_temp` / `compresor_logs` | Archivos del compresor MP4 |
+
+- `docker compose up -d --build` → **mantiene** datos.
+- `docker compose down` → **mantiene** volúmenes.
+- `docker compose down -v` → **borra** MySQL y archivos del compresor.
+
+### Copiar datos del PC local (SQLite) al MySQL de Docker
+
+1. Asegura que exista `backend/users.db` (datos locales).
+2. `.env` en la raíz con `MYSQL_PASSWORD` (y resto) apuntando al MySQL publicado (`MYSQL_PORT`, por defecto 3306).
+3. Contenedores en marcha.
+4. En Windows: doble clic en `Sincronizar_Local_a_Docker.bat`  
+   o desde `backend/`: `py sync_sqlite_to_mysql.py`
+
+Eso limpia las tablas destino y copia usuarios, cursos Moodle, perfiles, etc.
+
+### Respaldar / restaurar MySQL (servidor empresa)
+
+```bash
+# Respaldo
+docker compose exec -T db mysqldump -u root -p"$MYSQL_ROOT_PASSWORD" --databases herramientas --single-transaction > respaldo_herramientas.sql
+
+# Restaurar (servidor nuevo con contenedores ya creados)
+docker compose exec -T db mysql -u root -p"$MYSQL_ROOT_PASSWORD" < respaldo_herramientas.sql
+docker compose restart backend
+```
+
+**No subas** `respaldo_herramientas.sql` ni `.env` a GitHub (datos y secretos).
+
+## 8. Migración desde PostgreSQL / otra nube
+
+Las tablas se crean solas al arrancar (`create_all`). Para copiar datos existentes usa los scripts `backend/sync_to_cloud.py` / exportación manual, o importa un dump SQL a MySQL.

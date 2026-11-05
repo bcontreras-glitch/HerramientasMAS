@@ -33,10 +33,43 @@ export const GENERADOR_NAV_CLIENTES: GeneradorNavCliente[] = [
     procesos: [
       { label: "Altas de usuarios nuevos", href: "/generador/transelec/altas" },
       { label: "Externos", href: "/generador/transelec/matriz" },
+      { label: "Asignación Transelec", href: "/generador/transelec/asignacion" },
     ],
   },
-  { id: "aza", nombre: "AZA", disponible: false, procesos: [] },
-  { id: "carozzi", nombre: "Carozzi", disponible: false, procesos: [] },
+  {
+    id: "aza",
+    nombre: "AZA",
+    disponible: true,
+    procesos: [
+      { label: "Altas de usuarios", href: "/generador/aza/altas" },
+      { label: "Comparar nóminas", href: "/generador/aza/comparar" },
+    ],
+  },
+  {
+    id: "resiter",
+    nombre: "Resiter",
+    disponible: true,
+    procesos: [{ label: "Matriz SAP", href: "/generador/resiter" }],
+  },
+  {
+    id: "carozzi",
+    nombre: "Carozzi",
+    disponible: true,
+    procesos: [
+      { label: "Comparar DNI / C.I.", href: "/generador/carozzi" },
+      { label: "Comparador Todos Chile", href: "/generador/carozzi/todos-chile" },
+      { label: "Separar cursos activos", href: "/generador/carozzi/separar-cursos" },
+    ],
+  },
+  {
+    id: "emin",
+    nombre: "EMIN",
+    disponible: true,
+    procesos: [
+      { label: "Comparar nóminas", href: "/generador/emin" },
+      { label: "Consolidar cambios cliente", href: "/generador/emin/consolidar-cambios" },
+    ],
+  },
   { id: "habitat", nombre: "Habitat", disponible: false, procesos: [] },
   { id: "enaex", nombre: "Enaex", disponible: false, procesos: [] },
   { id: "bi", nombre: "BI", disponible: false, procesos: [] },
@@ -58,21 +91,42 @@ export const GENERADOR_CLIENTES: GeneradorCliente[] = [
   {
     id: "transelec",
     nombre: "Transelec",
-    descripcion: "Altas de usuarios nuevos y Externos (nómina ingresos externos en Subestaciones y/o Líneas).",
+    descripcion:
+      "Altas de usuarios nuevos, Externos (nómina ingresos) y Asignación (quién falta en la nómina LMS).",
     href: "/generador/transelec",
     disponible: true,
   },
   {
     id: "aza",
     nombre: "AZA",
-    descripcion: "Generador de nóminas AZA — próximamente.",
-    disponible: false,
+    descripcion:
+      "Altas CSV Moodle (nombre/RUT/correo + empresa/malla/tipo manual) y comparador de nóminas cliente vs plataforma.",
+    href: "/generador/aza",
+    disponible: true,
+  },
+  {
+    id: "resiter",
+    nombre: "Resiter",
+    descripcion:
+      "Genera CSV Moodle desde matriz Resiter (CSV, Excel o texto pegado). Asigna cursos SAP según perfil operacional, administrativo o CRM.",
+    href: "/generador/resiter",
+    disponible: true,
   },
   {
     id: "carozzi",
     nombre: "Carozzi",
-    descripcion: "Generador de nóminas Carozzi — próximamente.",
-    disponible: false,
+    descripcion:
+      "Comparadores Carozzi: DNI/C.I., Todos Chile, y separación de cursos aprobados en activos/inactivos.",
+    href: "/generador/carozzi",
+    disponible: true,
+  },
+  {
+    id: "emin",
+    nombre: "EMIN",
+    descripcion:
+      "Compara nómina cliente vs corregida, y consolida cambios cliente (antigua + nueva → unión con auditoría).",
+    href: "/generador/emin",
+    disponible: true,
   },
   {
     id: "habitat",

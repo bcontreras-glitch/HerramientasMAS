@@ -1,402 +1,161 @@
-# Manual de usuario — Plataforma de Herramientas BEX
+# Manual de usuario — Plataforma de Herramientas LMS
 
-**Para uso diario en el navegador**  
-**Empresa:** BEX · **Idioma:** Español  
-**Última actualización:** Mayo 2026
+**Uso diario en el navegador** · **Última actualización:** Noviembre 2026
 
----
-
-## Tabla de contenidos
-
-1. [¿Qué es esta plataforma?](#1-qué-es-esta-plataforma)
-2. [Antes de empezar](#2-antes-de-empezar)
-3. [Entrar a la plataforma](#3-entrar-a-la-plataforma)
-4. [Conocer la pantalla principal](#4-conocer-la-pantalla-principal)
-5. [Comparador de Datos](#5-comparador-de-datos)
-6. [Normalizador RUT](#6-normalizador-rut)
-7. [Normalizador de Textos](#7-normalizador-de-textos)
-8. [Mis Capacitaciones](#8-mis-capacitaciones)
-9. [Enlaces de interés](#9-enlaces-de-interés)
-10. [Calendario y tareas](#10-calendario-y-tareas)
-11. [Generador de Cargas (Moodle)](#11-generador-de-cargas-moodle)
-12. [Preguntas frecuentes](#12-preguntas-frecuentes)
-13. [¿Necesitas ayuda?](#13-necesitas-ayuda)
+Cada sección muestra la **vista** del módulo y explica con palabras el **proceso** para completar la tarea. En la app, **Descargar manual** genera un Word solo con los módulos a los que tienes permiso.
 
 ---
 
-## 1. ¿Qué es esta plataforma?
+## Entrar a la plataforma
 
-La **Plataforma de Herramientas BEX** es un sitio web interno donde puedes hacer tareas habituales sin instalar programas en tu computador. Todo se hace desde el navegador (Chrome, Edge o Firefox).
+Abre el enlace que te entregaron, escribe tu usuario y contraseña, y haz clic en **Iniciar Sesión**. Si no puedes entrar, contacta a tu administrador. No compartas tu clave.
 
-### ¿Para qué sirve?
-
-| Herramienta en el menú | En palabras simples |
-|------------------------|---------------------|
-| **Comparador de Datos** | Compara dos planillas Excel y te entrega un reporte con diferencias o coincidencias |
-| **Normalizador RUT** | Deja todos los RUT con el mismo formato |
-| **Normalizador Textos** | Pasa listas de texto a MAYÚSCULAS, minúsculas o formato título |
-| **Capacitaciones Mod 1** | Guarda tus capacitaciones (título, enlace, notas, fecha) |
-| **Enlaces de Interes** | Guarda enlaces útiles por empresa |
-| **Calendario & Tareas** | Agenda tareas por día y, si lo configuras, recibe recordatorio por correo |
-| **Generador de Cargas** | Crea archivos CSV para cargar usuarios en Moodle desde un Excel de dotación |
-
-> **Importante:** No todos ven las mismas opciones en el menú. Tu jefe o el área de sistemas define qué herramientas puedes usar. Si falta alguna, pídeles que te la habiliten.
+![Vista: inicio de sesión](capturas/01-login.png)
 
 ---
 
-## 2. Antes de empezar
+## Pantalla principal
 
-### Lo que necesitas
+A la izquierda está el menú **Herramientas**: haz clic en la opción que necesites. Abajo puedes cambiar la **Apariencia**, **Descargar manual** y **Cerrar Sesión**. Solo verás las herramientas que tu administrador te habilitó.
 
-- Un **usuario** y **contraseña** que te entregue tu administrador o jefe de área.
-- La **dirección web** de la plataforma (un enlace que suele verse así: `https://…vercel.app` o similar).
-- Un navegador actualizado (Chrome, Edge o Firefox).
-
-### Consejos generales
-
-- No compartas tu contraseña con otras personas.
-- Si trabajas con archivos Excel, tenlos listos en tu PC antes de subirlos.
-- Al terminar tu jornada, usa **Cerrar Sesión** (abajo en el menú izquierdo).
+![Vista: menú lateral](capturas/02-menu-lateral.png)
 
 ---
 
-## 3. Entrar a la plataforma
+## Comparador de Datos
 
-### Paso a paso
+Sirve para comparar dos archivos Excel y obtener un reporte con diferencias, coincidencias o ambos.
 
-1. Abre el enlace que te dieron (márcalo en favoritos para encontrarlo rápido).
-2. Escribe tu **Usuario**.
-3. Escribe tu **Contraseña**.
-4. Haz clic en **Iniciar Sesión**.
+**Proceso:** sube el Archivo Principal (tu base) y el Archivo de Contraste. Ajusta hoja, columnas o filas solo si hace falta. Elige el tipo de reporte (solo diferencias, solo coincidencias o ambos) y haz clic en **Comenzar comparación**. Se descargará un Excel nuevo; tus archivos originales no se modifican. Usa la misma columna clave en ambos (por ejemplo RUT o código).
 
-Si los datos son correctos, entrarás a la primera herramienta del menú (normalmente el **Comparador de Datos**).
-
-![Pantalla de inicio de sesión](capturas/01-login.png)
-
-### Si no puedes entrar
-
-| Situación | Qué hacer |
-|-----------|-----------|
-| Mensaje de usuario o contraseña incorrectos | Revisa que no tengas espacios de más; vuelve a escribir con cuidado |
-| Olvidaste la contraseña | Pide a tu administrador o a sistemas que te la restablezcan |
-| La página no carga | Prueba otro navegador o avisa a sistemas |
+![Vista del Comparador de Datos](capturas/04-comparador-vista.png)
 
 ---
 
-## 4. Conocer la pantalla principal
+## Normalizador RUT
 
-### Menú de la izquierda
+Sirve para dejar una lista de RUT chilenos con el mismo formato.
 
-En el costado izquierdo verás el menú **Herramientas**. Cada ícono lleva a una herramienta. La opción en la que estás se resalta en color.
+**Proceso:** pega un RUT por línea en el cuadro de la izquierda, elige el formato (con o sin puntos y guión; K en minúscula si aplica), haz clic en **Normalizar** y copia el resultado de la derecha.
 
-![Menú lateral con las herramientas](capturas/02-menu-lateral.png)
-
-### Cambiar colores (modo claro/oscuro y estilo)
-
-1. Abajo del menú, haz clic en **Apariencia**.
-2. Elige **Claro** u **Oscuro**.
-3. Elige un **estilo visual** (Océano, Aurora, Bosque, etc.).
-4. El navegador recordará tu preferencia la próxima vez que entres.
-
-![Panel de apariencia](capturas/03-apariencia.png)
-
-### Salir de forma segura
-
-- Haz clic en **Cerrar Sesión** (botón rojo al final del menú).
+![Vista del Normalizador RUT](capturas/07-rut.png)
 
 ---
 
-## 5. Comparador de Datos
+## Normalizador de Textos
 
-### ¿Qué hace?
+Sirve para transformar listas de texto a MAYÚSCULAS, minúsculas o Formato Título.
 
-Compara **dos archivos Excel** y te descarga un nuevo Excel con el resultado: solo lo que cambió, solo lo que coincide, o ambos en hojas separadas.
+**Proceso:** pega una línea por registro, elige el formato deseado, haz clic en **Normalizar** y copia el resultado.
 
-### Cuándo usarlo
-
-- Tienes una base “oficial” y otra lista que quieres contrastar (por ejemplo, nómina vs. asistencia).
-- Necesitas ver quién está en un archivo y no en el otro.
-
-### Paso a paso
-
-#### 1. Subir los dos archivos
-
-1. En el menú, entra a **Comparador de Datos**.
-2. En **Archivo Principal (Base)**, haz clic y elige el primer Excel.
-3. En **Archivo de Contraste**, elige el segundo Excel.
-
-![Vista del comparador](capturas/04-comparador-vista.png)
-
-#### 2. Indicar qué parte del Excel comparar
-
-En cada tarjeta puedes ajustar:
-
-| Campo | Significado sencillo |
-|-------|----------------------|
-| **Columna inicio / fin** | Letras de columnas a comparar (ej. de la A a la C) |
-| **Fila inicio** | Desde qué fila empiezan los datos (casi siempre **2** si la fila 1 son títulos) |
-| **Fila fin** | Hasta qué fila (déjalo vacío para usar todo el archivo) |
-| **Hoja** | Pestaña del Excel; si no sabes cuál, deja *Activa (Por defecto)* |
-
-![Archivos cargados con sus opciones](capturas/05-comparador-archivos.png)
-
-#### 3. Elegir el tipo de reporte
-
-- **Solo Diferencias:** lo que no coincide entre ambos archivos.
-- **Solo Coincidencias:** lo que aparece en los dos.
-- **Ambos (2 Hojas):** un archivo con las dos cosas en pestañas distintas.
-
-#### 4. Ejecutar y descargar
-
-1. Haz clic en **Comenzar comparación**.
-2. Espera unos segundos (verás que está procesando).
-3. Se descargará solo un archivo Excel con nombre tipo `Reporte_…xlsx`. Ábrelo con Excel.
-
-![Pantalla después de comparar](capturas/06-comparador-resultado.png)
-
-### Consejos
-
-- Usa la **misma columna clave** en ambos archivos (por ejemplo, RUT o código en la columna A).
-- Los textos se comparan **sin distinguir mayúsculas y minúsculas**.
-- Si el archivo es muy pesado y falla, avisa a sistemas.
+![Vista del Normalizador de Textos](capturas/08-textos.png)
 
 ---
 
-## 6. Normalizador RUT
+## Capacitaciones Mod 1
 
-### ¿Qué hace?
+Sirve como agenda personal de capacitaciones (título, enlace, duración, notas y fecha). En general solo tú ves lo que guardas con tu usuario.
 
-Toma una lista de RUT (uno por línea) y los deja todos con el **mismo formato**.
+**Proceso:** revisa el listado (puedes buscar). Para agregar, usa **Nueva Capacitación**, completa al menos el título y guarda. Para quitar una, usa el icono de papelera en esa fila.
 
-### Paso a paso
-
-1. Menú → **Normalizador RUT**.
-2. En el cuadro de la izquierda, pega o escribe un RUT por línea.
-3. Elige cómo quieres el resultado:
-   - Formato normalizado
-   - Sin puntos y con guión (`12345678-9`)
-   - Sin puntos ni guión (`123456789`)
-4. Si quieres la **K en minúscula**, marca la casilla correspondiente.
-5. Clic en **Normalizar**.
-6. A la derecha verás el resultado; usa **Copiar** para pegarlo en Excel u otro programa.
-
-![Normalizador RUT](capturas/07-rut.png)
+![Vista de Capacitaciones](capturas/09-capacitaciones.png)
 
 ---
 
-## 7. Normalizador de Textos
+## Enlaces de interés
 
-### ¿Qué hace?
+Sirve para guardar y organizar enlaces útiles por empresa.
 
-Transforma una lista de textos (una línea por registro) a **MAYÚSCULAS**, **minúsculas** o **Formato Título** (Primera Letra En Mayúscula).
+**Proceso:** filtra por empresa o busca por texto. Para agregar, indica título, URL, empresa y notas opcionales, y guarda. Desde cada tarjeta puedes abrir el enlace, editarlo o eliminarlo.
 
-### Paso a paso
-
-1. Menú → **Normalizador Textos**.
-2. Pega tu lista en el cuadro izquierdo.
-3. Elige el formato deseado.
-4. Clic en **Normalizar** y copia el resultado de la derecha.
-
-![Normalizador de textos](capturas/08-textos.png)
+![Vista de Enlaces de interés](capturas/11-enlaces.png)
 
 ---
 
-## 8. Mis Capacitaciones
+## Calendario y tareas
 
-### ¿Qué hace?
+Sirve para agendar tareas por día, marcarlas como hechas e importar varias desde Excel.
 
-Es tu **agenda personal de capacitaciones**: guardas título, enlace al video o curso, duración, notas y fecha. Solo tú ves las entradas que creas con tu usuario.
+**Proceso:** navega el mes con las flechas (naranja = pendientes, verde = completadas) y haz clic en un día para ver sus tareas. Para crear una, completa el título y, si aplica, curso, grupo, asunto, cuerpo de mail, correo de aviso y notas; luego guarda. Para importar, pega columnas Día y Tarea desde Excel y confirma en el asistente. El botón **Abrir Mail Composer** abre el sitio externo de BEX con los campos listos; no envía el correo desde esta plataforma.
 
-### Ver el listado
-
-1. Menú → **Capacitaciones Mod 1**.
-2. Usa el buscador si tienes muchas entradas.
-3. La tabla muestra todo lo que has guardado.
-
-![Listado de capacitaciones](capturas/09-capacitaciones.png)
-
-### Agregar una capacitación
-
-1. Clic en **Nueva Capacitación**.
-2. Completa al menos el **Título**; el resto es opcional pero recomendable (URL, duración, notas, fecha).
-3. Guarda el formulario.
-
-![Formulario nueva capacitación](capturas/10-capacitaciones-form.png)
-
-### Eliminar
-
-- En la fila que quieras borrar, usa el icono de **papelera** y confirma.
+![Vista de Calendario y tareas](capturas/12-recordatorios-calendario.png)
 
 ---
 
-## 9. Enlaces de interés
+## Reporte Consulta Cursos
 
-### ¿Qué hace?
+Sirve para convertir el texto de una consulta de cursos de Moodle en un Excel ordenado.
 
-Guarda enlaces web útiles (portales, documentos, sistemas) y los organiza por **empresa** para encontrarlos rápido.
+**Proceso:** pega el texto completo de la consulta, usa **Previsualizar** para revisar totales, elige si quieres varias hojas (una por curso) o una sola hoja, y descarga el Excel.
 
-### Paso a paso
-
-1. Menú → **Enlaces de Interes**.
-2. Filtra por empresa o busca por texto.
-3. Para agregar: abre el formulario de **nuevo enlace**, escribe título, dirección web (URL), empresa y notas si quieres.
-4. Para abrir un enlace guardado: usa el icono que abre la página en una pestaña nueva.
-5. Para cambiar o borrar: usa los iconos de editar o eliminar en cada tarjeta.
-
-![Catálogo de enlaces](capturas/11-enlaces.png)
-
-Cada empresa tiene un color de borde distinto para reconocer las tarjetas de un vistazo.
+![Vista de Reporte Consulta Cursos](capturas/21-consulta-cursos.png)
 
 ---
 
-## 10. Calendario y tareas
+## Usuarios Duplicados
 
-### ¿Qué hace?
+Sirve para analizar un Excel de nómina o usuarios y detectar grupos duplicados (por ejemplo mismo RUT o correo).
 
-Te permite **anotar tareas por día** en un calendario, marcarlas como hechas y, si configuras el correo, recibir un aviso por email.
+**Proceso:** sube el archivo Excel, haz clic en **Analizar**, revisa los grupos encontrados y descarga o copia los resultados. En la misma pantalla queda un historial de análisis previos.
 
-### Ver el calendario
-
-- Flechas **<** y **>** cambian de mes.
-- Los días con tareas muestran números:
-  - **Naranja:** pendientes
-  - **Verde:** completadas
-- Haz clic en un día para ver sus tareas a la derecha.
-
-![Calendario mensual](capturas/12-recordatorios-calendario.png)
-
-### Crear una tarea
-
-1. Elige el día en el calendario.
-2. Clic en **Nueva Tarea**.
-3. Escribe al menos el **Título**. Puedes agregar detalle, curso, grupo, ruta de carpeta, etc.
-4. En **Correo notificación** puedes poner el email que debe recibir el aviso ese día.
-5. Guarda.
-
-![Formulario de tarea](capturas/13-recordatorios-tarea.png)
-
-### Marcar como hecha
-
-- Haz clic en el círculo al lado de la tarea para alternar entre pendiente y completada.
-
-### Importar muchas tareas desde Excel
-
-1. Copia en Excel dos columnas: **Día** y **Tarea**.
-2. En la plataforma, clic en **Importar desde Excel** y pega los datos.
-3. Revisa fila por fila en el asistente antes de confirmar.
-
-### Recibir recordatorios por correo (opcional)
-
-Si tu área usa el envío automático de correos:
-
-1. En la parte superior del módulo, abre **Configuración SMTP** (icono de correo/configuración).
-2. Completa los datos que te entregue sistemas (servidor, puerto, usuario, contraseña de aplicación, remitente).
-3. Guarda.
-
-![Configuración de correo](capturas/14-recordatorios-smtp.png)
-
-> Si no configuras el correo, igual puedes usar el calendario; solo no recibirás avisos automáticos.
+![Vista de Usuarios Duplicados](capturas/22-usuarios-duplicados.png)
 
 ---
 
-## 11. Generador de Cargas (Moodle)
+## Compresor MP4
 
-### ¿Qué hace?
+Sirve para comprimir videos MP4 y generar un ZIP (reproductor + video) listo para subir a Moodle.
 
-Convierte un **Excel de dotación** (lista de personas) en archivos **CSV listos para subir a Moodle**, separados por perfil o departamento. La plataforma también cruza los cursos según una matriz interna que mantiene sistemas.
+**Proceso:** elige resolución (720p o 480p) y calidad (**Normal** o **Más compacto**; Más compacto se recomienda para videos de una hora o más). Agrega los videos, haz clic en **Optimizar** e indica LMS e ID de curso. Cuando termine, usa **Descargar ZIP**. En servidor, usa siempre el botón de descarga de la interfaz.
 
-### Qué necesitas tener
-
-- Permiso para ver **Generador de Cargas** en el menú.
-- El archivo Excel de dotación con **títulos en la primera fila**.
-- Saber qué columna indica el **perfil o departamento** de cada persona (debe coincidir con los nombres que usa tu empresa en la matriz de cursos).
-
-### Los 4 pasos del asistente
+![Vista del Compresor MP4](capturas/23-compresor-videos.png)
 
 ---
 
-#### Paso 1 — Subir el Excel
+## Evaluaciones Moodle
 
-1. Menú → **Generador de Cargas**.
-2. Arrastra el archivo o haz clic en la zona punteada para buscarlo en tu PC.
-3. Cuando cargue, pasarás solo al paso 2.
+Sirve para preparar evaluaciones para importar o documentar en Moodle.
 
-![Subir archivo de dotación](capturas/15-generador-paso1.png)
+**Proceso:** pega o carga el borrador (texto, GIFT `.txt` o Word `.docx`). Usa **Ordenar** para limpiar el contenido. Convierte a GIFT (con o sin negrita) para importar a Moodle, o exporta a Word. Si cargas un Word, puedes marcar la alternativa correcta y descargar el archivo modificado. Flujo habitual: pegar → ordenar → convertir a GIFT → descargar.
 
----
-
-#### Paso 2 — Elegir hoja y columnas
-
-1. Selecciona la **pestaña (hoja)** del Excel que quieres usar.
-2. Marca las **columnas** que deben salir en el archivo final (datos de Moodle).
-3. Para ir más rápido, usa **Usar Recomendadas Moodle** (selecciona los campos más usados).
-4. Clic en **Configurar Mapeo** para continuar.
-
-![Hoja y columnas](capturas/16-generador-paso2.png)
+![Vista de Evaluaciones Moodle](capturas/24-evaluaciones-moodle.png)
 
 ---
 
-#### Paso 3 — Relacionar columnas y nombre del grupo
+## Análisis de Resultados
 
-1. Escribe el **Nombre del Grupo de Inducción** (ej. `Grupo Inducción Mayo 2026`). Ese nombre se repetirá en los cursos del grupo.
-2. Para cada columna de salida, indica:
-   - De qué **columna del Excel** sale el dato, o
-   - Un **valor fijo** que será igual para todos (por ejemplo, tipo de acceso o “usuario activo”).
-3. Revisa bien el campo de **departamento/perfil**: debe coincidir con cómo están nombrados los perfiles en la matriz de cursos.
-4. Puedes usar **Previsualizar 10 Filas** para ver una muestra antes de generar todo.
+Sirve para analizar el informe de respuestas de un quiz Moodle a partir de un solo Excel.
 
-![Mapeo de datos](capturas/17-generador-paso3.png)
+**Proceso:** sube el Excel exportado desde Moodle (debe traer enunciado, respuesta del usuario y respuesta correcta por pregunta). Usa **Previsualizar** para ver porcentaje de acierto y preguntas difíciles. Luego descarga el Excel con las hojas Resumen, Por pregunta, Por usuario y Detalle de respuestas. Se considera acierto si la respuesta coincide con la correcta; si alguien rindió varias veces, aparecen todos los intentos.
 
-**La plataforma ajusta automáticamente algunos campos habituales:**
-
-| Campo | Qué hace |
-|-------|----------|
-| Usuario / contraseña | Suele tomar el RUT sin puntos ni guión |
-| Nombre, apellido, email, departamento | Los pasa a MAYÚSCULAS |
-| Tipo de acceso y “suspendido” | Muchas veces van con valores fijos que define tu área |
+![Vista de Análisis de Resultados](capturas/25-analisis-resultados.png)
 
 ---
 
-#### Paso 4 — Revisar y descargar
+## Generador de Nóminas / Cargas
 
-1. Revisa las primeras filas de cada perfil en las pestañas.
-2. Si está correcto, clic en **Generar ZIP Completo**.
-3. Se descargará un archivo `.zip` con un CSV por cada perfil. Ábrelos con Excel; usan **punto y coma** como separador (formato habitual en Chile).
+Sirve para generar cargas o comparaciones según el cliente. Entra a **Generador de Nóminas**, elige el cliente y el proceso.
 
-![Previsualización antes de descargar](capturas/18-generador-paso4.png)
+**Proceso BEX (cargas e inducciones):** sube el Excel de dotación con títulos en la primera fila; elige hoja y columnas (puedes usar Recomendadas Moodle); mapea columnas, nombre de grupo y la columna de perfil de inducción (debe coincidir con los perfiles de la plataforma); previsualiza y genera el ZIP con un CSV por perfil para Moodle.
 
-### Si algo sale mal
+**Otros clientes:** Transelec (altas, externos, asignación), AZA (comparar nóminas), Resiter (CSV desde matriz SAP), Carozzi (comparar DNI/C.I., Todos Chile, separar cursos) y EMIN (comparar nóminas y consolidar cambios). Cada uno sigue un asistente similar: subir archivo, revisar opciones y descargar el resultado. Si un cliente aparece como no disponible, aún no tiene proceso activo en tu instalación.
 
-| Mensaje o problema | Qué revisar |
-|------------------|-------------|
-| No aparecen cursos para un perfil | El nombre del departamento en el Excel no coincide con la matriz; consulta con quien administra la matriz |
-| No se generó ningún archivo | Falta mapear usuario/RUT o hay filas vacías |
-| El ZIP no se descarga | Vuelve a intentar; si persiste, avisa a sistemas con captura de pantalla |
+![Vista del Generador de Nóminas](capturas/15-generador-paso1.png)
 
 ---
 
-## 12. Preguntas frecuentes
+## Panel de Administrador
 
-| Pregunta | Respuesta |
-|----------|-----------|
-| ¿Por qué no veo una herramienta en el menú? | Tu usuario no tiene permiso para esa herramienta. Pide habilitación a tu jefe o a sistemas. |
-| ¿Mis capacitaciones y enlaces los ven otros? | Cada usuario ve lo que guarda con su cuenta, salvo que en el futuro se comparta de otra forma. |
-| ¿Puedo usar la plataforma desde el celular? | Funciona en navegador móvil, pero es más cómoda en computador por los archivos Excel. |
-| ¿Se guarda solo al hacer clic en guardar? | Sí. Si cierras el navegador sin guardar un formulario abierto, puedes perder lo que no guardaste. |
-| ¿Cambio de contraseña? | Por ahora debe hacerlo un administrador desde **Administrar Usuarios** (solo personal autorizado). |
-| ¿El comparador modifica mis archivos originales? | No. Solo lee los que subes y te entrega un archivo nuevo de resultado. |
+Visible solo si eres superadministrador.
+
+**Proceso:** crea o edita usuarios, asigna solo los módulos que cada persona necesita y, según la instalación, configura el correo SMTP de recordatorios. Asigna el mínimo de permisos necesario.
+
+![Vista de administración de usuarios](capturas/19-admin-usuarios.png)
 
 ---
 
-## 13. ¿Necesitas ayuda?
+## Ayuda
 
-| Tipo de ayuda | A quién contactar |
-|---------------|-------------------|
-| Usuario, contraseña o falta una herramienta en el menú | Administrador de tu área o mesa de ayuda / sistemas |
-| Enlace web de la plataforma | El mismo contacto que te dio el acceso inicial |
-| Matriz de cursos o archivos del generador | Responsable de capacitación o sistemas |
-| Correos de recordatorio que no llegan | Sistemas (revisión de configuración SMTP) |
+Si no ves una herramienta que necesitas, pide a tu administrador que te habilite el permiso. Para problemas de acceso (usuario, contraseña o enlace), contacta a sistemas o a quien te dio la cuenta.
 
----
-
-*Manual con capturas de pantalla incluidas. Versión PDF: `Manual_Usuario_Plataforma_BEX.pdf` en esta misma carpeta.*
+Guías técnicas de servidor (Docker, credenciales TI) están fuera de este manual: ver `DEPLOY_DOCKER.md` y `PASO_A_PASO_TI.md` en el repositorio.

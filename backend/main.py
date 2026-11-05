@@ -1,9 +1,10 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Depends, status, Body, Response, BackgroundTasks
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse, RedirectResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
+import io
 import json
 import os
 import csv
@@ -19,17 +20,15 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-from database import engine, get_db, Base, SessionLocal
+from database import engine, get_db, Base, SessionLocal, ensure_user_schema
 import models
 import auth
 import config
 from deps import get_current_user, require_permission, check_login_rate_limit
 from security_utils import (
     safe_upload_filename,
-    safe_video_filename,
+    safe_planilla_filename,
     read_upload_limited,
-    read_video_upload_limited,
-    stream_video_upload_to_file,
     escape_html,
     protect_smtp_config,
     expose_smtp_config,
@@ -40,6 +39,10 @@ from security_utils import (
 )
 
 models.Base.metadata.create_all(bind=engine)
+try:
+    ensure_user_schema()
+except Exception as _schema_exc:
+    logging.getLogger("uvicorn.error").warning("No se pudo migrar schema users: %s", _schema_exc)
 
 app = FastAPI(
     title="Herramientas API",
@@ -57,161 +60,311 @@ app.add_middleware(
 
 logger = logging.getLogger("recordatorios_mailer")
 
+def _task_due_for_notification(date_str: str, task: dict, now: datetime) -> bool:
+    """Decide si una tarea ya debe notificarse por SMTP."""
+    current_date_str = now.strftime("%Y-%m-%d")
+    if date_str > current_date_str:
+        return False
+    hora = (task.get("hora") or "").strip()
+    if not hora:
+        # Todo el día: digest a partir de las 9:00
+        return now.hour >= 9
+    try:
+        hour_s, minute_s = hora.split(":", 1)
+        due_minutes = int(hour_s) * 60 + int(minute_s)
+    except (ValueError, TypeError):
+        return now.hour >= 9
+    if date_str < current_date_str:
+        return True
+    now_minutes = now.hour * 60 + now.minute
+    return now_minutes >= due_minutes
+
+
+def _resolve_smtp_record(db, username: str):
+    """SMTP del usuario; si no hay, usa el de un superadmin (config central)."""
+    smtp_rec = db.query(models.AppData).filter(
+        models.AppData.username == username,
+        models.AppData.module_name == "smtp_config",
+    ).first()
+    if smtp_rec and smtp_rec.payload_json:
+        return smtp_rec
+    admins = db.query(models.User).filter(models.User.role == "superadmin").all()
+    for admin in admins:
+        smtp_rec = db.query(models.AppData).filter(
+            models.AppData.username == admin.username,
+            models.AppData.module_name == "smtp_config",
+        ).first()
+        if smtp_rec and smtp_rec.payload_json:
+            return smtp_rec
+    return None
+
+
 async def dispatcher_background_loop():
     logger.info("Recordatorios mailer background worker started.")
     while True:
         try:
-            # Despierta cada 60 segundos
             await asyncio.sleep(60)
-            
+
             db = SessionLocal()
             now = datetime.now()
-            
-            # Ejecutar despachos si ya son las 9:00 AM o más
-            current_date_str = now.strftime("%Y-%m-%d")
-            if now.hour >= 9:
-                records = db.query(models.AppData).filter(models.AppData.module_name == "recordatorios").all()
-                for rec in records:
-                    if not rec.payload_json: continue
-                    try:
-                        tasks_db = json.loads(rec.payload_json)
-                    except:
-                        continue
-                        
-                    # Agrupar tareas pendientes por correo de notificación
-                    grouped_tasks = {}
-                    for date_str, task_list in list(tasks_db.items()):
-                        if date_str <= current_date_str:
-                            for idx, task in enumerate(task_list):
-                                if not task.get("completada", False) and task.get("correo_notificacion") and not task.get("notificado", False):
-                                    email = task.get("correo_notificacion").strip().lower()
-                                    if email:
-                                        if email not in grouped_tasks:
-                                            grouped_tasks[email] = []
-                                        grouped_tasks[email].append((date_str, idx, task))
-                    
-                    if not grouped_tasks:
-                        continue
-                        
-                    # Cargar SMTP config de este usuario
-                    smtp_rec = db.query(models.AppData).filter(
-                        models.AppData.username == rec.username,
-                        models.AppData.module_name == "smtp_config"
-                    ).first()
-                    
-                    if not smtp_rec or not smtp_rec.payload_json:
-                        continue
-                        
-                    try:
-                        smtp_cfg = smtp_config_for_mailer(json.loads(smtp_rec.payload_json))
-                    except:
-                        continue
-                        
-                    if not smtp_cfg or not smtp_cfg.get("host") or not smtp_cfg.get("username") or not smtp_cfg.get("password"):
-                        continue
-                        
-                    dirty = False
-                    # Procesar cada destinatario y enviarle su resumen
-                    for email, tasks_to_send in grouped_tasks.items():
-                        try:
-                            tasks_html = ""
-                            for date_str, idx, t in tasks_to_send:
-                                tasks_html += f"""
-                                <div style="margin-bottom: 20px; padding: 20px; border: 1px solid #e4e4e7; border-radius: 8px; background-color: #fafafa; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
-                                    <div style="margin-bottom: 12px; border-bottom: 1px solid #f4f4f5; padding-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
-                                        <span style="font-size: 16px; font-weight: bold; color: #8b5cf6;">📌 {escape_html(t.get('titulo', 'Tarea'))}</span>
-                                        <span style="font-size: 12px; color: #a1a1aa; background-color: #f4f4f5; padding: 4px 8px; border-radius: 4px; font-weight: bold;">📅 {escape_html(date_str)}</span>
-                                    </div>
-                                    <p style="margin: 0 0 12px 0; font-size: 14px; color: #3f3f46; line-height: 1.5;">{escape_html(t.get('cuerpo_mail') or t.get('detalle', 'Sin detalles adicionales.'))}</p>
-                                    <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
-                                """
-                                if t.get("curso"):
-                                    tasks_html += f"""
-                                        <tr>
-                                            <td style="padding: 4px 0; font-weight: bold; color: #71717a; width: 100px;">📚 Curso ID:</td>
-                                            <td style="padding: 4px 0; color: #18181b;">{escape_html(t.get('curso'))}</td>
-                                        </tr>
-                                    """
-                                if t.get("grupo"):
-                                    tasks_html += f"""
-                                        <tr>
-                                            <td style="padding: 4px 0; font-weight: bold; color: #71717a;">👥 Grupo:</td>
-                                            <td style="padding: 4px 0; color: #18181b;">{escape_html(t.get('grupo'))}</td>
-                                        </tr>
-                                    """
-                                if t.get("asunto"):
-                                    tasks_html += f"""
-                                        <tr>
-                                            <td style="padding: 4px 0; font-weight: bold; color: #71717a;">📝 Asunto:</td>
-                                            <td style="padding: 4px 0; color: #18181b;">{escape_html(t.get('asunto'))}</td>
-                                        </tr>
-                                    """
-                                tasks_html += """
-                                    </table>
-                                </div>
-                                """
 
-                            html_content = f"""
-                            <html>
-                            <body style="font-family: Arial, sans-serif; background-color: #f4f4f5; padding: 20px; margin: 0;">
-                                <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; border: 1px solid #e4e4e7; overflow: hidden; box-shadow: 0 4px 10px rgba(0,0,0,0.05);">
-                                    <div style="background-color: #8b5cf6; padding: 24px; color: #ffffff; text-align: center;">
-                                        <h2 style="margin: 0; font-size: 24px; font-weight: bold; letter-spacing: -0.5px;">🔔 Resumen de Tareas Pendientes</h2>
-                                        <p style="margin: 6px 0 0 0; opacity: 0.9; font-size: 14px;">Plataforma de Herramientas BEX</p>
-                                    </div>
-                                    <div style="padding: 24px; color: #18181b;">
-                                        <p style="font-size: 15px; color: #3f3f46; margin-top: 0; margin-bottom: 20px;">Tienes las siguientes tareas programadas para hoy:</p>
-                                        
-                                        {tasks_html}
-                                        
-                                        <hr style="border: 0; border-top: 1px solid #e4e4e7; margin: 24px 0;">
-                                        <p style="font-size: 12px; color: #a1a1aa; text-align: center; margin-bottom: 0; line-height: 1.5;">
-                                            Este es un recordatorio automático consolidado enviado a las 9:00 AM.<br>
-                                            Por favor, no respondas a este correo.
-                                        </p>
-                                    </div>
+            records = db.query(models.AppData).filter(models.AppData.module_name == "recordatorios").all()
+            for rec in records:
+                if not rec.payload_json:
+                    continue
+                try:
+                    tasks_db = json.loads(rec.payload_json)
+                except Exception:
+                    continue
+
+                grouped_tasks = {}
+                for date_str, task_list in list(tasks_db.items()):
+                    for idx, task in enumerate(task_list):
+                        if task.get("completada", False):
+                            continue
+                        if not task.get("correo_notificacion") or task.get("notificado", False):
+                            continue
+                        if not _task_due_for_notification(date_str, task, now):
+                            continue
+                        email = task.get("correo_notificacion").strip().lower()
+                        if not email:
+                            continue
+                        grouped_tasks.setdefault(email, []).append((date_str, idx, task))
+
+                if not grouped_tasks:
+                    continue
+
+                smtp_rec = _resolve_smtp_record(db, rec.username)
+
+                if not smtp_rec or not smtp_rec.payload_json:
+                    continue
+
+                try:
+                    smtp_cfg = smtp_config_for_mailer(json.loads(smtp_rec.payload_json))
+                except Exception:
+                    continue
+
+                if not smtp_cfg or not smtp_cfg.get("host") or not smtp_cfg.get("username") or not smtp_cfg.get("password"):
+                    continue
+
+                dirty = False
+                for email, tasks_to_send in grouped_tasks.items():
+                    try:
+                        tasks_html = ""
+                        for date_str, idx, t in tasks_to_send:
+                            hora_label = (t.get("hora") or "").strip()
+                            when_label = f"{escape_html(date_str)}" + (f" {escape_html(hora_label)}" if hora_label else "")
+                            body_text = t.get("detalle") or t.get("cuerpo_mail") or "Sin detalles adicionales."
+                            tasks_html += f"""
+                            <div style="margin-bottom: 20px; padding: 20px; border: 1px solid #e4e4e7; border-radius: 8px; background-color: #fafafa; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+                                <div style="margin-bottom: 12px; border-bottom: 1px solid #f4f4f5; padding-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
+                                    <span style="font-size: 16px; font-weight: bold; color: #8b5cf6;">📌 {escape_html(t.get('titulo', 'Tarea'))}</span>
+                                    <span style="font-size: 12px; color: #a1a1aa; background-color: #f4f4f5; padding: 4px 8px; border-radius: 4px; font-weight: bold;">📅 {when_label}</span>
                                 </div>
-                            </body>
-                            </html>
+                                <p style="margin: 0 0 12px 0; font-size: 14px; color: #3f3f46; line-height: 1.5;">{escape_html(body_text)}</p>
+                                <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
                             """
-                            
-                            msg = MIMEMultipart('alternative')
-                            msg['Subject'] = f"🔔 Resumen de Tareas Pendientes ({len(tasks_to_send)} Tareas)"
-                            sender_name = smtp_cfg.get("sender_name") or "Plataforma Herramientas"
-                            sender_addr = smtp_cfg.get("sender_email") or smtp_cfg.get("username")
-                            msg['From'] = f"{sender_name} <{sender_addr}>"
-                            msg['To'] = email
-                            
-                            msg.attach(MIMEText(html_content, 'html'))
-                            
-                            # Conexión SMTP
-                            srv = smtplib.SMTP(smtp_cfg["host"], int(smtp_cfg["port"]))
-                            if smtp_cfg.get("use_tls", True) or int(smtp_cfg.get("port", 587)) == 587:
-                                srv.starttls()
-                            srv.login(smtp_cfg["username"], smtp_cfg["password"])
-                            srv.sendmail(sender_addr, email, msg.as_string())
-                            srv.quit()
-                            
-                            # Marcar como notificado
-                            for date_str, idx, task in tasks_to_send:
-                                tasks_db[date_str][idx]["notificado"] = True
-                            dirty = True
-                            logger.info(f"Consolidated notification email sent to {email} with {len(tasks_to_send)} tasks.")
-                        except Exception as send_err:
-                            logger.error(f"Error sending consolidated email to {email}: {send_err}")
-                            
-                    if dirty:
-                        rec.payload_json = json.dumps(tasks_db)
-                        db.commit()
-                        
+                            if t.get("curso"):
+                                tasks_html += f"""
+                                    <tr>
+                                        <td style="padding: 4px 0; font-weight: bold; color: #71717a; width: 100px;">📚 Curso ID:</td>
+                                        <td style="padding: 4px 0; color: #18181b;">{escape_html(t.get('curso'))}</td>
+                                    </tr>
+                                """
+                            if t.get("grupo"):
+                                tasks_html += f"""
+                                    <tr>
+                                        <td style="padding: 4px 0; font-weight: bold; color: #71717a;">👥 Grupo:</td>
+                                        <td style="padding: 4px 0; color: #18181b;">{escape_html(t.get('grupo'))}</td>
+                                    </tr>
+                                """
+                            if t.get("asunto"):
+                                tasks_html += f"""
+                                    <tr>
+                                        <td style="padding: 4px 0; font-weight: bold; color: #71717a;">📝 Asunto:</td>
+                                        <td style="padding: 4px 0; color: #18181b;">{escape_html(t.get('asunto'))}</td>
+                                    </tr>
+                                """
+                            tasks_html += """
+                                </table>
+                            </div>
+                            """
+
+                        html_content = f"""
+                        <html>
+                        <body style="font-family: Arial, sans-serif; background-color: #f4f4f5; padding: 20px; margin: 0;">
+                            <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; border: 1px solid #e4e4e7; overflow: hidden; box-shadow: 0 4px 10px rgba(0,0,0,0.05);">
+                                <div style="background-color: #8b5cf6; padding: 24px; color: #ffffff; text-align: center;">
+                                    <h2 style="margin: 0; font-size: 24px; font-weight: bold; letter-spacing: -0.5px;">🔔 Resumen de Tareas Pendientes</h2>
+                                    <p style="margin: 6px 0 0 0; opacity: 0.9; font-size: 14px;">Plataforma de Herramientas BEX</p>
+                                </div>
+                                <div style="padding: 24px; color: #18181b;">
+                                    <p style="font-size: 15px; color: #3f3f46; margin-top: 0; margin-bottom: 20px;">Tienes las siguientes tareas pendientes:</p>
+                                    {tasks_html}
+                                    <hr style="border: 0; border-top: 1px solid #e4e4e7; margin: 24px 0;">
+                                    <p style="font-size: 12px; color: #a1a1aa; text-align: center; margin-bottom: 0; line-height: 1.5;">
+                                        Recordatorio automático de la Plataforma de Herramientas.<br>
+                                        Por favor, no respondas a este correo.
+                                    </p>
+                                </div>
+                            </div>
+                        </body>
+                        </html>
+                        """
+
+                        msg = MIMEMultipart("alternative")
+                        msg["Subject"] = f"🔔 Resumen de Tareas Pendientes ({len(tasks_to_send)} Tareas)"
+                        sender_name = smtp_cfg.get("sender_name") or "Plataforma Herramientas"
+                        sender_addr = smtp_cfg.get("sender_email") or smtp_cfg.get("username")
+                        msg["From"] = f"{sender_name} <{sender_addr}>"
+                        msg["To"] = email
+
+                        msg.attach(MIMEText(html_content, "html"))
+
+                        srv = smtplib.SMTP(smtp_cfg["host"], int(smtp_cfg["port"]))
+                        if smtp_cfg.get("use_tls", True) or int(smtp_cfg.get("port", 587)) == 587:
+                            srv.starttls()
+                        srv.login(smtp_cfg["username"], smtp_cfg["password"])
+                        srv.sendmail(sender_addr, email, msg.as_string())
+                        srv.quit()
+
+                        for date_str, idx, task in tasks_to_send:
+                            tasks_db[date_str][idx]["notificado"] = True
+                        dirty = True
+                        logger.info(f"Consolidated notification email sent to {email} with {len(tasks_to_send)} tasks.")
+                    except Exception as send_err:
+                        logger.error(f"Error sending consolidated email to {email}: {send_err}")
+
+                if dirty:
+                    rec.payload_json = json.dumps(tasks_db)
+                    db.commit()
+
             db.close()
         except Exception as loop_err:
             logger.error(f"Error in dispatcher background loop: {loop_err}")
 
 DEFAULT_ADMIN_PERMISSIONS = json.dumps([
     "comparador", "rut", "textos", "capacitaciones",
-    "enlaces", "recordatorios", "generador",
+    "enlaces", "recordatorios", "generador", "consulta_cursos",
+    "usuarios_duplicados", "compresor_video", "evaluaciones_moodle",
+    "analisis_resultados",
 ])
+
+
+def _load_platform_smtp(db: Session) -> dict | None:
+    """SMTP del usuario actual o de un superadmin (config del Panel)."""
+    for username in (
+        config.ADMIN_MASTER_USER,
+        *[u.username for u in db.query(models.User).filter(models.User.role == "superadmin").all()],
+    ):
+        rec = _resolve_smtp_record(db, username)
+        if not rec or not rec.payload_json:
+            continue
+        try:
+            cfg = smtp_config_for_mailer(json.loads(rec.payload_json))
+        except Exception:
+            continue
+        if cfg and cfg.get("host") and cfg.get("username") and cfg.get("password"):
+            return cfg
+    return None
+
+
+def _send_welcome_email(
+    db: Session,
+    *,
+    to_email: str,
+    username: str,
+    password: str,
+    is_reset: bool = False,
+) -> None:
+    smtp_cfg = _load_platform_smtp(db)
+    if not smtp_cfg:
+        raise RuntimeError(
+            "SMTP no configurado. Configure el correo en Panel de Administrador → SMTP."
+        )
+    frontend = config.PUBLIC_FRONTEND_URL or "http://localhost:3000"
+    subject = (
+        "Nueva clave provisional — Plataforma de Herramientas"
+        if is_reset
+        else "Acceso a Plataforma de Herramientas"
+    )
+    intro = (
+        "Se regeneró tu clave provisional de acceso."
+        if is_reset
+        else "Se creó tu cuenta en la Plataforma de Herramientas."
+    )
+    html = f"""
+    <div style="font-family:Segoe UI,Arial,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#18181b;">
+      <h2 style="margin:0 0 12px 0;">Bienvenido/a</h2>
+      <p>{intro}</p>
+      <p><strong>Usuario:</strong> {escape_html(username)}<br/>
+         <strong>Contraseña provisional:</strong> {escape_html(password)}</p>
+      <p>Ingresa aquí: <a href="{escape_html(frontend)}">{escape_html(frontend)}</a></p>
+      <p style="color:#71717a;font-size:13px;">
+        Esta clave fue generada automáticamente. En el primer inicio de sesión
+        (o el próximo) deberás cambiarla por una de tu elección.
+      </p>
+    </div>
+    """
+    msg = MIMEMultipart("alternative")
+    sender_addr = smtp_cfg.get("sender_email") or smtp_cfg.get("username")
+    sender_name = smtp_cfg.get("sender_name") or "Plataforma Herramientas"
+    msg["Subject"] = subject
+    msg["From"] = f"{sender_name} <{sender_addr}>"
+    msg["To"] = to_email
+    msg.attach(MIMEText(html, "html", "utf-8"))
+
+    port = int(smtp_cfg.get("port") or 587)
+    host = smtp_cfg["host"]
+    use_tls = bool(smtp_cfg.get("use_tls", True)) or port in (587, 465)
+    if port == 465:
+        with smtplib.SMTP_SSL(host, port, timeout=45) as srv:
+            srv.ehlo()
+            srv.login(smtp_cfg["username"], smtp_cfg["password"])
+            srv.sendmail(sender_addr, [to_email], msg.as_string())
+    else:
+        with smtplib.SMTP(host, port, timeout=45) as srv:
+            srv.ehlo()
+            if use_tls:
+                srv.starttls()
+                srv.ehlo()
+            srv.login(smtp_cfg["username"], smtp_cfg["password"])
+            srv.sendmail(sender_addr, [to_email], msg.as_string())
+
+
+def _normalize_person_name(value: str | None, field: str) -> str:
+    name = (value or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail=f"El {field} es obligatorio")
+    if len(name) > 100:
+        raise HTTPException(status_code=400, detail=f"El {field} es demasiado largo")
+    return name
+
+
+def _user_public_dict(u: models.User) -> dict:
+    return {
+        "id": u.id,
+        "username": u.username,
+        "role": u.role,
+        "permissions": json.loads(u.permissions_json or "[]"),
+        "email": getattr(u, "email", "") or "",
+        "nombre": getattr(u, "nombre", "") or "",
+        "apellido": getattr(u, "apellido", "") or "",
+        "must_change_password": bool(getattr(u, "must_change_password", False)),
+    }
+
+
+def _normalize_email(value: str | None) -> str:
+    return (value or "").strip().lower()
+
+
+def _validate_email(value: str) -> str:
+    email = _normalize_email(value)
+    if not email or "@" not in email or "." not in email.split("@")[-1]:
+        raise HTTPException(status_code=400, detail="Correo electrónico inválido")
+    if len(email) > 255:
+        raise HTTPException(status_code=400, detail="Correo demasiado largo")
+    return email
 
 
 @app.on_event("startup")
@@ -224,6 +377,10 @@ def startup_event():
             hashed_password=auth.get_password_hash(config.BOOTSTRAP_ADMIN_PASSWORD),
             role="superadmin",
             permissions_json=DEFAULT_ADMIN_PERMISSIONS,
+            email="",
+            nombre="",
+            apellido="",
+            must_change_password=False,
         )
         db.add(admin_user)
         db.commit()
@@ -240,6 +397,12 @@ def startup_event():
         ensure_transelec_seeded(db)
     except Exception as e:
         logger.warning("No se pudo inicializar catálogo Transelec: %s", e)
+    try:
+        from aza_db import ensure_aza_seeded
+
+        ensure_aza_seeded(db)
+    except Exception as e:
+        logger.warning("No se pudo inicializar catálogo AZA: %s", e)
     finally:
         db.close()
     asyncio.create_task(dispatcher_background_loop())
@@ -260,10 +423,14 @@ def set_auth_cookie(response: Response, access_token: str) -> None:
 @app.get("/api/health")
 def health_check():
     from paths import resolve_matriz_cursos_path
+    from database import engine
+
+    dialect = getattr(getattr(engine, "dialect", None), "name", "unknown")
     return {
         "status": "ok",
         "env": config.APP_ENV,
         "database": "configured" if config.SQLALCHEMY_DATABASE_URL else "missing",
+        "database_dialect": dialect,
         "matriz_cursos": bool(resolve_matriz_cursos_path()),
     }
 
@@ -275,6 +442,11 @@ def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db),
 ):
+    if not config.OIDC_LOCAL_LOGIN_ENABLED:
+        raise HTTPException(
+            status_code=403,
+            detail="El login local está deshabilitado. Use SSO.",
+        )
     check_login_rate_limit(request)
     username = (form_data.username or "").strip()
     user = db.query(models.User).filter(models.User.username == username).first()
@@ -294,7 +466,146 @@ def login(
 
     access_token = auth.create_access_token(data={"sub": user.username})
     set_auth_cookie(response, access_token)
-    return {"token_type": "bearer", "message": "ok"}
+    return {
+        "token_type": "bearer",
+        "message": "ok",
+        "must_change_password": bool(getattr(user, "must_change_password", False)),
+    }
+
+
+@app.get("/api/auth/oidc/status")
+def oidc_status():
+    """El frontend usa esto para mostrar botones SSO si hay tenants configurados."""
+    try:
+        return {
+            "enabled": config.OIDC_ENABLED,
+            "tenants": config.oidc_configured_tenants(),
+            "local_login_enabled": config.OIDC_LOCAL_LOGIN_ENABLED,
+        }
+    except Exception:
+        logger.exception("OIDC status falló")
+        return {
+            "enabled": False,
+            "tenants": [],
+            "local_login_enabled": True,
+        }
+
+
+@app.get("/api/auth/oidc/login")
+async def oidc_login(tenant: str = "lms"):
+    import oidc as oidc_client
+
+    if not config.OIDC_ENABLED:
+        raise HTTPException(status_code=503, detail="SSO no configurado")
+    try:
+        url, _state = await oidc_client.build_authorize_url(tenant)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Error iniciando OIDC (%s)", tenant)
+        raise HTTPException(status_code=502, detail="No se pudo contactar Authentik") from exc
+    return RedirectResponse(url=url, status_code=302)
+
+
+@app.get("/api/auth/oidc/callback")
+async def oidc_callback(
+    request: Request,
+    db: Session = Depends(get_db),
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    error_description: str | None = None,
+):
+    import oidc as oidc_client
+
+    frontend = (config.PUBLIC_FRONTEND_URL or "").rstrip("/") or "http://localhost:3000"
+
+    def fail(msg: str) -> RedirectResponse:
+        from urllib.parse import quote
+
+        return RedirectResponse(
+            url=f"{frontend}/login?sso_error={quote(msg)}",
+            status_code=302,
+        )
+
+    if error:
+        return fail(error_description or error)
+    if not code or not state:
+        return fail("Respuesta OIDC incompleta")
+
+    try:
+        state_data = oidc_client.parse_oidc_state(state)
+        tenant = state_data["tenant"]
+        exchanged = await oidc_client.exchange_code(tenant, code)
+    except Exception as exc:
+        logger.exception("OIDC callback falló")
+        return fail(str(exc) or "Error en SSO")
+
+    claims = exchanged["claims"]
+    cfg = exchanged["config"]
+    email = _normalize_email(claims.get("email") or "")
+    sub = str(claims.get("sub") or "").strip()
+    if not email or not sub:
+        return fail("El IdP no envió email/sub")
+
+    if not oidc_client.email_allowed(email, cfg.get("allowed_domains") or []):
+        return fail("Tu dominio de correo no está autorizado")
+
+    given = (claims.get("given_name") or claims.get("name") or "").strip()
+    family = (claims.get("family_name") or "").strip()
+    if given and " " in given and not family:
+        parts = given.split(None, 1)
+        given, family = parts[0], parts[1]
+
+    user = (
+        db.query(models.User)
+        .filter(models.User.oidc_sub == sub, models.User.oidc_tenant == tenant)
+        .first()
+    )
+    if not user:
+        user = db.query(models.User).filter(models.User.email == email).first()
+    if not user:
+        user = (
+            db.query(models.User)
+            .filter(models.User.username == oidc_client.username_from_email(email))
+            .first()
+        )
+
+    if not user:
+        if not config.OIDC_AUTO_CREATE_USERS:
+            return fail("Usuario no registrado. Contacta a un administrador.")
+        user = models.User(
+            username=oidc_client.username_from_email(email),
+            hashed_password=auth.get_password_hash(auth.generate_temporary_password(24)),
+            role="user",
+            permissions_json=json.dumps(config.OIDC_DEFAULT_PERMISSIONS),
+            email=email,
+            nombre=given[:100],
+            apellido=family[:100],
+            must_change_password=False,
+            auth_provider="oidc",
+            oidc_sub=sub,
+            oidc_tenant=tenant,
+        )
+        db.add(user)
+    else:
+        user.email = email or (user.email or "")
+        user.auth_provider = "oidc"
+        user.oidc_sub = sub
+        user.oidc_tenant = tenant
+        user.must_change_password = False
+        if given and not (user.nombre or "").strip():
+            user.nombre = given[:100]
+        if family and not (user.apellido or "").strip():
+            user.apellido = family[:100]
+
+    db.commit()
+    db.refresh(user)
+
+    access_token = auth.create_access_token(data={"sub": user.username})
+    response = RedirectResponse(url=f"{frontend}/", status_code=302)
+    set_auth_cookie(response, access_token)
+    return response
 
 
 @app.post("/api/auth/logout")
@@ -309,51 +620,107 @@ def logout(response: Response):
 
 @app.get("/api/auth/me")
 def read_users_me(current_user: models.User = Depends(get_current_user)):
-    return {
-        "id": current_user.id,
-        "username": current_user.username,
-        "role": current_user.role,
-        "permissions": json.loads(current_user.permissions_json)
-    }
+    return _user_public_dict(current_user)
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+@app.post("/api/auth/change-password")
+def change_password(
+    body: ChangePasswordRequest,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not auth.verify_password(body.current_password, current_user.hashed_password):
+        raise HTTPException(status_code=400, detail="La contraseña actual es incorrecta")
+    new_password = (body.new_password or "").strip()
+    if len(new_password) < 8:
+        raise HTTPException(status_code=400, detail="La nueva contraseña debe tener al menos 8 caracteres")
+    if new_password == body.current_password:
+        raise HTTPException(status_code=400, detail="La nueva contraseña debe ser distinta a la actual")
+    current_user.hashed_password = auth.get_password_hash(new_password)
+    current_user.must_change_password = False
+    db.commit()
+    return {"status": "ok", "must_change_password": False}
+
 
 class UserCreate(BaseModel):
     username: str
-    password: str
+    password: str = ""
     role: str
     permissions: list[str]
+    email: str | None = None
+    nombre: str | None = None
+    apellido: str | None = None
+    reset_password: bool = False
 
 @app.get("/api/users")
 def get_users(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     if current_user.role != "superadmin":
         raise HTTPException(status_code=403, detail="Not superadmin")
     users = db.query(models.User).all()
-    return [{"id": u.id, "username": u.username, "role": u.role, "permissions": json.loads(u.permissions_json)} for u in users]
+    return [_user_public_dict(u) for u in users]
 
 @app.post("/api/users")
 def create_user(user: UserCreate, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     if current_user.role != "superadmin":
         raise HTTPException(status_code=403, detail="Not superadmin")
-    if db.query(models.User).filter(models.User.username == user.username).first():
+    username = (user.username or "").strip()
+    if not username:
+        raise HTTPException(status_code=400, detail="El nombre de usuario no puede estar vacío")
+    if db.query(models.User).filter(models.User.username == username).first():
         raise HTTPException(status_code=400, detail="Username already registered")
     if user.role == "superadmin" and current_user.username != config.ADMIN_MASTER_USER:
         raise HTTPException(status_code=403, detail="Solo el administrador principal puede crear superadmins")
 
     validate_role(user.role)
     perms = validate_permissions(user.permissions)
-    if len(user.password) < 8:
-        raise HTTPException(status_code=400, detail="La contraseña debe tener al menos 8 caracteres")
+    email = _validate_email(user.email)
+    nombre = _normalize_person_name(user.nombre, "nombre")
+    apellido = _normalize_person_name(user.apellido, "apellido")
 
-    hashed_password = auth.get_password_hash(user.password)
+    # Clave provisional generada por el sistema (el admin no la conoce)
+    temp_password = auth.generate_temporary_password()
+    hashed_password = auth.get_password_hash(temp_password)
     db_user = models.User(
-        username=user.username,
+        username=username,
         hashed_password=hashed_password,
         role=user.role,
-        permissions_json=json.dumps(perms)
+        permissions_json=json.dumps(perms),
+        email=email,
+        nombre=nombre,
+        apellido=apellido,
+        must_change_password=True,
+        auth_provider="local",
+        oidc_sub="",
+        oidc_tenant="",
     )
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
-    return {"id": db_user.id, "username": db_user.username}
+
+    try:
+        _send_welcome_email(db, to_email=email, username=username, password=temp_password)
+    except Exception as exc:
+        logger.warning("No se pudo enviar correo de bienvenida a %s: %s", email, exc)
+        db.delete(db_user)
+        db.commit()
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "No se pudo enviar el correo con la clave provisional. "
+                "El usuario no fue creado. Revise SMTP e intente de nuevo. "
+                f"Detalle: {exc}"
+            ),
+        ) from exc
+
+    return {
+        **_user_public_dict(db_user),
+        "email_sent": True,
+    }
 
 @app.put("/api/users/{user_id}")
 def update_user(user_id: int, user: UserCreate, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -362,21 +729,99 @@ def update_user(user_id: int, user: UserCreate, current_user: models.User = Depe
     db_user = db.query(models.User).filter(models.User.id == user_id).first()
     if not db_user:
         raise HTTPException(status_code=404, detail="User not found")
-    
+
     if user.role == "superadmin" and current_user.username != config.ADMIN_MASTER_USER and db_user.role != "superadmin":
         raise HTTPException(status_code=403, detail="Solo el administrador principal puede asignar rol superadmin")
 
     validate_role(user.role)
     perms = validate_permissions(user.permissions)
-    db_user.username = user.username
-    if user.password:
-        if len(user.password) < 8:
-            raise HTTPException(status_code=400, detail="La contraseña debe tener al menos 8 caracteres")
-        db_user.hashed_password = auth.get_password_hash(user.password)
+
+    old_username = db_user.username
+    new_username = (user.username or "").strip()
+    if not new_username:
+        raise HTTPException(status_code=400, detail="El nombre de usuario no puede estar vacío")
+    if len(new_username) > 50:
+        raise HTTPException(status_code=400, detail="El nombre de usuario es demasiado largo")
+
+    if old_username == "admin" and new_username != "admin":
+        raise HTTPException(status_code=400, detail="No se puede renombrar el usuario admin")
+
+    migrated_modules = 0
+    if new_username != old_username:
+        conflict = (
+            db.query(models.User)
+            .filter(models.User.username == new_username, models.User.id != user_id)
+            .first()
+        )
+        if conflict:
+            raise HTTPException(status_code=400, detail="Username already registered")
+
+        # Datos huérfanos bajo el nuevo nombre (p. ej. usuario borrado antes): se reemplazan.
+        orphans = db.query(models.AppData).filter(models.AppData.username == new_username).all()
+        for orphan in orphans:
+            db.delete(orphan)
+
+        migrated_modules = (
+            db.query(models.AppData)
+            .filter(models.AppData.username == old_username)
+            .update({models.AppData.username: new_username}, synchronize_session=False)
+        )
+        db_user.username = new_username
+        logger.info(
+            "Usuario renombrado '%s' -> '%s' (%s módulo(s) de app_data migrados).",
+            old_username,
+            new_username,
+            migrated_modules,
+        )
+
+    temp_password = None
+    if user.reset_password:
+        if not (db_user.email or "").strip() and not (user.email and str(user.email).strip()):
+            raise HTTPException(
+                status_code=400,
+                detail="Para regenerar la clave se necesita un correo electrónico del usuario.",
+            )
+        temp_password = auth.generate_temporary_password()
+        db_user.hashed_password = auth.get_password_hash(temp_password)
+        db_user.must_change_password = True
+
+    if user.email is not None and str(user.email).strip():
+        db_user.email = _validate_email(user.email)
+    if user.nombre is not None:
+        db_user.nombre = _normalize_person_name(user.nombre, "nombre")
+    if user.apellido is not None:
+        db_user.apellido = _normalize_person_name(user.apellido, "apellido")
+
     db_user.role = user.role
     db_user.permissions_json = json.dumps(perms)
     db.commit()
-    return {"status": "updated"}
+
+    email_sent = False
+    email_error = None
+    if temp_password and (db_user.email or "").strip():
+        try:
+            _send_welcome_email(
+                db,
+                to_email=db_user.email,
+                username=db_user.username,
+                password=temp_password,
+                is_reset=True,
+            )
+            email_sent = True
+        except Exception as exc:
+            email_error = str(exc)
+            logger.warning("No se pudo reenviar correo a %s: %s", db_user.email, exc)
+
+    return {
+        "status": "updated",
+        "username": db_user.username,
+        "renamed": new_username != old_username,
+        "migrated_modules": migrated_modules,
+        "must_change_password": bool(db_user.must_change_password),
+        "email_sent": email_sent,
+        "email_error": email_error,
+        "password_reset": bool(temp_password),
+    }
 
 @app.delete("/api/users/{user_id}")
 def delete_user(user_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -395,36 +840,21 @@ def delete_user(user_id: int, current_user: models.User = Depends(get_current_us
 class RutInput(BaseModel):
     ruts: str
     formato: str
-    k_minuscula: bool
+    k_minuscula: bool = False
+    generar_dv: bool = False  # listado sin dígito → calcularlo
+    validar: bool = True  # verificar DV con módulo 11
 
 @app.post("/api/rut/normalizar")
 def normalizar_rut(data: RutInput, current_user: models.User = Depends(require_permission("rut"))):
-    ruts_limpios = data.ruts.replace("'", "").replace('"', "").replace('\r', '')
-    lista_ruts = [r.strip() for r in ruts_limpios.split('\n') if r.strip()]
-    
-    resultados = []
-    for rut in lista_ruts:
-        rut_base = rut.upper().replace(".", "")
-        if "-" not in rut_base and len(rut_base) > 1:
-            rut_base = rut_base[:-1] + "-" + rut_base[-1]
-            
-        partes = rut_base.split("-")
-        if len(partes) != 2:
-            resultados.append(rut)
-            continue
-            
-        cuerpo, dv = partes[0], partes[1]
-        if data.k_minuscula and dv == 'K': dv = 'k'
-            
-        if data.formato == "Sin Puntos y Con Guión":
-            resultados.append(f"{cuerpo}-{dv}")
-        elif data.formato == "Sin Puntos y Sin Guión":
-            resultados.append(f"{cuerpo}{dv}")
-        else:
-            cuerpo_puntos = f"{int(cuerpo):,}".replace(",", ".") if cuerpo.isdigit() else cuerpo
-            resultados.append(f"{cuerpo_puntos}-{dv}")
-            
-    return {"ruts": "\n".join(resultados), "total": len(resultados)}
+    from rut_utils import normalizar_lista
+
+    return normalizar_lista(
+        data.ruts,
+        formato=data.formato,
+        k_minuscula=data.k_minuscula,
+        generar_dv=bool(getattr(data, "generar_dv", False)),
+        validar=bool(getattr(data, "validar", True)),
+    )
 
 
 # === RUTAS PARA NORMALIZADOR DE NOMBRES ===
@@ -458,6 +888,205 @@ def normalizar_textos(data: NombresInput, current_user: models.User = Depends(re
 @app.post("/api/nombres/normalizar")
 def normalizar_nombres(data: NombresInput, current_user: models.User = Depends(require_permission("textos"))):
     return _normalizar_lista_textos(data.nombres, data.formato)
+
+
+# === REPORTE CONSULTA CURSOS (MOODLE) ===
+from consulta_cursos_parser import (
+    build_excel_bytes,
+    filter_inscritos_si,
+    parse_consulta_text,
+    summarize_rows,
+)
+
+
+class ConsultaCursosInput(BaseModel):
+    texto: str
+    modo_excel: str = "multi"
+
+
+def _rows_consulta_filtrados(texto: str):
+    raw = parse_consulta_text(texto)
+    if not raw:
+        raise HTTPException(
+            status_code=400,
+            detail="No se encontraron registros. Verifique que el texto incluya líneas «Curso: … (ID …)» y filas con RUT.",
+        )
+    rows = filter_inscritos_si(raw)
+    if not rows:
+        raise HTTPException(
+            status_code=400,
+            detail="Solo había filas con Inscrito=NO. No hay registros para mostrar (se excluyen los no inscritos).",
+        )
+    return rows
+
+
+@app.post("/api/consulta-cursos/preview")
+def preview_consulta_cursos(
+    data: ConsultaCursosInput,
+    current_user: models.User = Depends(require_permission("consulta_cursos")),
+):
+    texto = (data.texto or "").strip()
+    if not texto:
+        raise HTTPException(status_code=400, detail="Pegue el resultado de la consulta Moodle.")
+    rows = _rows_consulta_filtrados(texto)
+    summary = summarize_rows(rows)
+    return {
+        **summary,
+        "muestra": [r.as_data_list() for r in rows[:5]],
+    }
+
+
+@app.post("/api/consulta-cursos/excel")
+def export_consulta_cursos_excel(
+    data: ConsultaCursosInput,
+    current_user: models.User = Depends(require_permission("consulta_cursos")),
+):
+    texto = (data.texto or "").strip()
+    if not texto:
+        raise HTTPException(status_code=400, detail="Pegue el resultado de la consulta Moodle.")
+    rows = _rows_consulta_filtrados(texto)
+    modo = (data.modo_excel or "multi").strip().lower()
+    if modo not in {"multi", "single"}:
+        modo = "multi"
+    try:
+        content, filename = build_excel_bytes(rows, modo_excel=modo)
+        return StreamingResponse(
+            iter([content]),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=generic_error_detail(e, "reporte consulta cursos"))
+
+
+# === USUARIOS DUPLICADOS (mdl_user) ===
+from mdl_user_duplicados import (
+    analyze_duplicates,
+    build_excel_bytes as build_duplicados_excel,
+    build_result_payload,
+    read_mdl_user_file,
+)
+
+MDL_USER_HISTORY_KEY = "usuarios_duplicados"
+MDL_USER_MAX_SCANS = 20
+
+
+def _load_duplicados_history(username: str, db: Session) -> dict:
+    data = get_json_db(MDL_USER_HISTORY_KEY, username, db)
+    if isinstance(data, dict) and isinstance(data.get("scans"), list):
+        return data
+    return {"scans": []}
+
+
+def _save_duplicados_scan(username: str, scan: dict, db: Session) -> dict:
+    history = _load_duplicados_history(username, db)
+    scans = history.get("scans", [])
+    scans.insert(0, scan)
+    history["scans"] = scans[:MDL_USER_MAX_SCANS]
+    save_db(MDL_USER_HISTORY_KEY, username, history, db)
+    return scan
+
+
+@app.post("/api/usuarios-duplicados/analizar")
+async def analizar_usuarios_duplicados(
+    file: UploadFile = File(...),
+    current_user: models.User = Depends(require_permission("usuarios_duplicados")),
+    db: Session = Depends(get_db),
+):
+    path = None
+    try:
+        safe_name = safe_planilla_filename(file.filename)
+        content = await read_upload_limited(file)
+        path = os.path.join(tempfile.mkdtemp(), safe_name)
+        with open(path, "wb") as f:
+            f.write(content)
+
+        _, rows = read_mdl_user_file(path)
+        analysis = analyze_duplicates(rows)
+        scan = build_result_payload(file.filename or safe_name, analysis)
+        _save_duplicados_scan(current_user.username, scan, db)
+        return scan
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=generic_error_detail(exc, "análisis de duplicados"))
+    finally:
+        if path and os.path.exists(path):
+            shutil.rmtree(os.path.dirname(path), ignore_errors=True)
+
+
+@app.get("/api/usuarios-duplicados/historial")
+def historial_usuarios_duplicados(
+    current_user: models.User = Depends(require_permission("usuarios_duplicados")),
+    db: Session = Depends(get_db),
+):
+    history = _load_duplicados_history(current_user.username, db)
+    summaries = []
+    for scan in history.get("scans", []):
+        summaries.append(
+            {
+                "id": scan.get("id"),
+                "filename": scan.get("filename"),
+                "analyzed_at": scan.get("analyzed_at"),
+                "total_rows": scan.get("total_rows", 0),
+                "duplicate_groups": scan.get("duplicate_groups", 0),
+                "duplicate_rows": scan.get("duplicate_rows", 0),
+                "rows_without_key": scan.get("rows_without_key", 0),
+                "by_criterion": scan.get("by_criterion", {}),
+            }
+        )
+    return {"scans": summaries}
+
+
+@app.get("/api/usuarios-duplicados/historial/{scan_id}")
+def obtener_scan_usuarios_duplicados(
+    scan_id: str,
+    current_user: models.User = Depends(require_permission("usuarios_duplicados")),
+    db: Session = Depends(get_db),
+):
+    history = _load_duplicados_history(current_user.username, db)
+    for scan in history.get("scans", []):
+        if scan.get("id") == scan_id:
+            return scan
+    raise HTTPException(status_code=404, detail="Análisis no encontrado.")
+
+
+@app.delete("/api/usuarios-duplicados/historial")
+def limpiar_historial_usuarios_duplicados(
+    current_user: models.User = Depends(require_permission("usuarios_duplicados")),
+    db: Session = Depends(get_db),
+):
+    save_db(MDL_USER_HISTORY_KEY, current_user.username, {"scans": []}, db)
+    return {"status": "success"}
+
+
+class DuplicadosExcelInput(BaseModel):
+    scan_id: str | None = None
+
+
+@app.post("/api/usuarios-duplicados/excel")
+def exportar_usuarios_duplicados_excel(
+    data: DuplicadosExcelInput,
+    current_user: models.User = Depends(require_permission("usuarios_duplicados")),
+    db: Session = Depends(get_db),
+):
+    if not data.scan_id:
+        raise HTTPException(status_code=400, detail="Indique el análisis a exportar.")
+    history = _load_duplicados_history(current_user.username, db)
+    scan = next((s for s in history.get("scans", []) if s.get("id") == data.scan_id), None)
+    if not scan:
+        raise HTTPException(status_code=404, detail="Análisis no encontrado.")
+    try:
+        content, filename = build_duplicados_excel(scan)
+        return StreamingResponse(
+            iter([content]),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=generic_error_detail(exc, "exportación duplicados"))
 
 
 # === CRUD JSON ===
@@ -507,11 +1136,77 @@ def save_db(db_name: str, username: str, data, db_session: Session):
         db_session.add(new_record)
     db_session.commit()
 
+def _capacitaciones_xlsx(items: list) -> bytes:
+    from openpyxl.styles import Alignment, Font, PatternFill
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Capacitaciones"
+    headers = ["Capacitación", "Enlace"]
+    header_fill = PatternFill("solid", fgColor="312E81")
+    header_font = Font(bold=True, color="FFFFFF")
+    for col, title in enumerate(headers, start=1):
+        cell = ws.cell(1, col, title)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(vertical="center")
+
+    link_font = Font(color="0563C1", underline="single")
+    row_idx = 2
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        nombre = str(item.get("title") or "").strip()
+        raw_url = str(item.get("url") or "").strip()
+        if not nombre and not raw_url:
+            continue
+        ws.cell(row_idx, 1, nombre or "Sin nombre")
+        link_cell = ws.cell(row_idx, 2, raw_url)
+        if raw_url:
+            href = raw_url if raw_url.lower().startswith(("http://", "https://")) else f"https://{raw_url}"
+            link_cell.hyperlink = href
+            link_cell.font = link_font
+        row_idx += 1
+
+    ws.column_dimensions["A"].width = 48
+    ws.column_dimensions["B"].width = 72
+    ws.auto_filter.ref = f"A1:B{max(row_idx - 1, 1)}"
+    ws.freeze_panes = "A2"
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+@app.get("/api/capacitaciones/export")
+def export_capacitaciones(
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if current_user.role != "superadmin":
+        user_permissions = json.loads(current_user.permissions_json or "[]")
+        if "capacitaciones" not in user_permissions:
+            raise HTTPException(status_code=403, detail="Not enough permissions")
+    data = get_json_db("capacitaciones", current_user.username, db)
+    items = data if isinstance(data, list) else []
+    if not items:
+        raise HTTPException(status_code=400, detail="No hay capacitaciones para descargar.")
+    fecha = datetime.now().strftime("%Y-%m-%d")
+    filename = f"Capacitaciones_{fecha}.xlsx"
+    return Response(
+        content=_capacitaciones_xlsx(items),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @app.get("/api/db/{db_name}")
 def read_db(db_name: str, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
-    if current_user.role != "superadmin":
+    if db_name == "smtp_config":
+        if current_user.role != "superadmin":
+            raise HTTPException(status_code=403, detail="Not enough permissions")
+    elif current_user.role != "superadmin":
         user_permissions = json.loads(current_user.permissions_json)
-        if db_name not in user_permissions and not (db_name == "smtp_config" and "recordatorios" in user_permissions):
+        if db_name not in user_permissions:
             raise HTTPException(status_code=403, detail="Not enough permissions")
     if db_name not in config.VALID_DB_MODULES:
         raise HTTPException(status_code=404, detail="DB not found")
@@ -519,9 +1214,12 @@ def read_db(db_name: str, current_user: models.User = Depends(get_current_user),
 
 @app.post("/api/db/{db_name}")
 def write_db(db_name: str, data: dict | list = Body(...), current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
-    if current_user.role != "superadmin":
+    if db_name == "smtp_config":
+        if current_user.role != "superadmin":
+            raise HTTPException(status_code=403, detail="Not enough permissions")
+    elif current_user.role != "superadmin":
         user_permissions = json.loads(current_user.permissions_json)
-        if db_name not in user_permissions and not (db_name == "smtp_config" and "recordatorios" in user_permissions):
+        if db_name not in user_permissions:
             raise HTTPException(status_code=403, detail="Not enough permissions")
     if db_name not in config.VALID_DB_MODULES:
         raise HTTPException(status_code=404, detail="DB not found")
@@ -895,7 +1593,7 @@ async def api_inspect_excel(
 async def api_preview_carga(
     file: UploadFile = File(...),
     sheet_name: str = Form(...),
-    grupo: str = Form(...),
+    grupo: str = Form(""),
     mapping: str = Form(...),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_permission("generador")),
@@ -925,56 +1623,30 @@ async def api_preview_carga(
         header = [str(c).strip() if c else "" for c in rows_dot[0]]
         col_name_to_idx = {name: idx for idx, name in enumerate(header) if name}
         
-        previews = {}
-        data_rows = rows_dot[1:]
-        perfiles_sin_cursos: set[str] = set()
-        
-        for r in data_rows:
+        out_headers = list(mapping_dict.keys())
+        preview_rows = []
+
+        for r in rows_dot[1:]:
             if not any(r):
                 continue
-                
-            res = process_row_mapping(r, col_name_to_idx, mapping_dict, grupo, db)
-            if not res["courses"] and res["perfil_norm"] != "SIN_PERFIL":
-                perfiles_sin_cursos.add(res["perfil_original"])
-            p_norm = res["perfil_norm"]
-            p_original = res["perfil_original"]
-            processed_row = res["processed_row"]
-            courses = res["courses"]
-            
-            if p_norm not in previews:
-                out_headers = list(mapping_dict.keys())
-                for i in range(1, len(courses) + 1):
-                    out_headers.append(f"group{i}")
-                    out_headers.append(f"course{i}")
-                
-                previews[p_norm] = {
-                    "profile_name": p_original,
-                    "headers": out_headers,
-                    "rows": []
-                }
-                
-            if len(previews[p_norm]["rows"]) < 10:
-                row_vals = []
-                for out_col in mapping_dict.keys():
-                    row_vals.append(processed_row.get(out_col, ""))
-                for course in courses:
-                    row_vals.append(grupo)
-                    row_vals.append(course)
-                previews[p_norm]["rows"].append(row_vals)
 
+            res = process_row_mapping(r, col_name_to_idx, mapping_dict, grupo, db)
+            processed_row = res["processed_row"]
+
+            if len(preview_rows) < 10:
+                preview_rows.append([processed_row.get(out_col, "") for out_col in mapping_dict.keys()])
+
+        previews = {}
         warnings = []
-        if perfiles_sin_cursos:
-            info = get_matriz_info_db(db)
-            nombres = ", ".join(p["hoja"] for p in info.get("perfiles", []))
+        if preview_rows:
+            previews["salida"] = {
+                "profile_name": "Salida",
+                "headers": out_headers,
+                "rows": preview_rows,
+            }
+        else:
             warnings.append(
-                "Perfiles sin cursos asignados: "
-                + ", ".join(sorted(perfiles_sin_cursos))
-                + f". Cree o edite el perfil en «Perfiles de inducción» (disponibles: {nombres})."
-                + " El valor de PERFIL DE INDUCCIÓN debe coincidir con el nombre del perfil."
-            )
-        if not previews:
-            warnings.append(
-                "No se generaron filas. Verifique usuario/RUT y que exista columna PERFIL DE INDUCCIÓN."
+                "No se generaron filas. Verifique que el archivo tenga datos y que el mapeo incluya usuario/RUT cuando corresponda."
             )
 
         return {"previews": previews, "warnings": warnings}
@@ -988,7 +1660,7 @@ async def api_generar_carga(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     sheet_name: str = Form(...),
-    grupo: str = Form(...),
+    grupo: str = Form(""),
     mapping: str = Form(...),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_permission("generador")),
@@ -1017,76 +1689,39 @@ async def api_generar_carga(
         header = [str(c).strip() if c else "" for c in rows_dot[0]]
         col_name_to_idx = {name: idx for idx, name in enumerate(header) if name}
         
-        colaboradores_por_perfil = {}
+        out_headers = list(mapping_dict.keys())
+        csv_rows = []
         for r_idx, r in enumerate(rows_dot[1:]):
             if not any(r):
                 continue
-                
+
             res = process_row_mapping(r, col_name_to_idx, mapping_dict, grupo, db)
-            p_norm = res["perfil_norm"]
-            p_original = res["perfil_original"]
             processed_row = res["processed_row"]
-            courses = res["courses"]
-            
+
             username = processed_row.get("username")
             if not username:
                 continue
-                
-            if p_norm not in colaboradores_por_perfil:
-                colaboradores_por_perfil[p_norm] = {
-                    "original_name": p_original,
-                    "courses": courses,
-                    "items": []
-                }
-            colaboradores_por_perfil[p_norm]["items"].append(processed_row)
-            
-        generated_files = []
-        for p_norm, p_data in colaboradores_por_perfil.items():
-            original_name = p_data["original_name"]
-            items = p_data["items"]
-            cursos = p_data["courses"]
-            
-            out_headers = list(mapping_dict.keys())
-            for i in range(1, len(cursos) + 1):
-                out_headers.append(f"group{i}")
-                out_headers.append(f"course{i}")
-                
-            safe_p_name = "".join(c for c in p_norm if c.isalnum() or c in (" ", "_", "-")).replace(" ", "_")
-            csv_filename = f"script_{safe_p_name}.csv"
-            csv_filepath = os.path.join(temp_dir, csv_filename)
-            
-            with open(csv_filepath, mode="w", newline="", encoding="utf-8-sig") as csv_file:
-                writer = csv.writer(csv_file, delimiter=";")
-                writer.writerow(out_headers)
-                
-                for item in items:
-                    row = []
-                    for out_col in mapping_dict.keys():
-                        row.append(item.get(out_col, ""))
-                    for course in cursos:
-                        row.append(grupo)
-                        row.append(course)
-                    writer.writerow(row)
-                    
-            generated_files.append(csv_filepath)
-            
-        if not generated_files:
+
+            csv_rows.append([processed_row.get(out_col, "") for out_col in mapping_dict.keys()])
+
+        if not csv_rows:
             raise HTTPException(status_code=400, detail="No se generaron registros válidos del archivo de entrada.")
-            
-        zip_name = f"Cargas_Induccion_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
-        zip_path = os.path.join(temp_dir, zip_name)
-        
-        with zipfile.ZipFile(zip_path, "w") as zip_f:
-            for fpath in generated_files:
-                zip_f.write(fpath, os.path.basename(fpath))
-                
-        dest_zip_path = os.path.abspath(zip_name)
-        shutil.copy(zip_path, dest_zip_path)
-        
+
+        csv_name = f"Carga_BEX_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        csv_path = os.path.join(temp_dir, csv_name)
+
+        with open(csv_path, mode="w", newline="", encoding="utf-8-sig") as csv_file:
+            writer = csv.writer(csv_file, delimiter=";")
+            writer.writerow(out_headers)
+            writer.writerows(csv_rows)
+
+        dest_csv_path = os.path.abspath(csv_name)
+        shutil.copy(csv_path, dest_csv_path)
+
         shutil.rmtree(temp_dir)
-        
-        background_tasks.add_task(os.remove, dest_zip_path)
-        return FileResponse(path=dest_zip_path, filename=zip_name, media_type="application/zip")
+
+        background_tasks.add_task(os.remove, dest_csv_path)
+        return FileResponse(path=dest_csv_path, filename=csv_name, media_type="text/csv")
         
     except HTTPException as he:
         raise he
@@ -1097,82 +1732,22 @@ async def api_generar_carga(
 
 
 from transelec_routes import router as transelec_router
+from aza_routes import router as aza_router
+from resiter_routes import router as resiter_router
+from carozzi_routes import router as carozzi_router
+from emin_routes import router as emin_router
 
 app.include_router(transelec_router)
+app.include_router(aza_router)
+app.include_router(resiter_router)
+app.include_router(carozzi_router)
+app.include_router(emin_router)
 
-# === GENERADOR DE PAQUETES DE VIDEO ===
-from pathlib import Path as FsPath
-from video_packages import (
-    crear_zip_lote,
-    generar_paquetes_video,
-    validar_nombre_carpeta,
-    validar_url_curso,
-)
+from compresor_routes import router as compresor_router
+from analisis_resultados_routes import router as analisis_resultados_router
+from manual_routes import router as manual_router
 
-
-@app.post("/api/generador/videos/generar")
-async def api_generar_paquetes_video(
-    background_tasks: BackgroundTasks,
-    nombre_lote: str = Form(...),
-    course_url: str = Form(...),
-    videos: list[UploadFile] = File(...),
-    current_user: models.User = Depends(require_permission("generador")),
-):
-    error = validar_nombre_carpeta(nombre_lote)
-    if error:
-        raise HTTPException(status_code=400, detail=error)
-
-    error = validar_url_curso(course_url)
-    if error:
-        raise HTTPException(status_code=400, detail=error)
-
-    if not videos:
-        raise HTTPException(status_code=400, detail="Agrega al menos un video.")
-
-    temp_dir = tempfile.mkdtemp()
-    saved_paths: list[FsPath] = []
-    total_bytes = 0
-
-    try:
-        for upload in videos:
-            safe_name = safe_video_filename(upload.filename)
-            dest = FsPath(temp_dir) / f"{len(saved_paths)}_{safe_name}"
-            file_size = await stream_video_upload_to_file(upload, dest)
-            total_bytes += file_size
-            if total_bytes > config.MAX_VIDEO_BATCH_BYTES:
-                raise HTTPException(
-                    status_code=413,
-                    detail=(
-                        f"El total de videos supera el límite de "
-                        f"{config.MAX_VIDEO_BATCH_BYTES // (1024 * 1024)} MB."
-                    ),
-                )
-            saved_paths.append(dest)
-
-        lote_dir = generar_paquetes_video(
-            FsPath(temp_dir),
-            nombre_lote.strip(),
-            course_url.strip(),
-            saved_paths,
-        )
-
-        zip_name = f"{nombre_lote.strip()}.zip"
-        zip_path = FsPath(temp_dir) / zip_name
-        crear_zip_lote(lote_dir, zip_path)
-
-        dest_zip = os.path.abspath(zip_name)
-        shutil.copy(zip_path, dest_zip)
-        shutil.rmtree(temp_dir, ignore_errors=True)
-
-        background_tasks.add_task(os.remove, dest_zip)
-        return FileResponse(dest_zip, filename=zip_name, media_type="application/zip")
-    except HTTPException:
-        shutil.rmtree(temp_dir, ignore_errors=True)
-        raise
-    except Exception as e:
-        shutil.rmtree(temp_dir, ignore_errors=True)
-        raise HTTPException(
-            status_code=500,
-            detail=generic_error_detail(e, "generación de paquetes de video"),
-        )
+app.include_router(compresor_router)
+app.include_router(analisis_resultados_router)
+app.include_router(manual_router)
 

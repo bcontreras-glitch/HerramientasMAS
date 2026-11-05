@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import tempfile
@@ -15,7 +16,14 @@ from sqlalchemy.orm import Session
 import models
 from database import get_db
 from deps import require_permission
-from security_utils import generic_error_detail, read_upload_limited, safe_upload_filename
+from security_utils import (
+    generic_error_detail,
+    read_upload_limited,
+    safe_csv_filename,
+    safe_planilla_filename,
+    safe_upload_filename,
+)
+from transelec_asignacion_comparador import generar_reporte_bytes as generar_reporte_asignacion_bytes
 from transelec_db import ensure_transelec_seeded, get_catalog, save_catalog
 from transelec_parser import (
     generar_csv_alta_bytes,
@@ -36,7 +44,7 @@ class GenerarAltaBody(BaseModel):
     rut: str
     firstname: str
     lastname: str
-    grupo: str
+    grupo: str = ""  # legacy; ya no se usa en el CSV
     forzar_email_no_transelec: bool = False
 
 
@@ -166,16 +174,10 @@ def api_altas_generar(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_permission("generador")),
 ):
-    ensure_transelec_seeded(db)
-    cat = get_catalog(db)
     if not body.rut.strip() or not body.firstname.strip():
         raise HTTPException(status_code=400, detail="RUT y firstname son obligatorios.")
     if not body.email.strip():
         raise HTTPException(status_code=400, detail="Correo obligatorio.")
-    if not body.grupo.strip():
-        raise HTTPException(status_code=400, detail="Selecciona un grupo.")
-    if not cat["cursos"]:
-        raise HTTPException(status_code=400, detail="No hay cursos en el catálogo.")
     email = body.email.strip().lower()
     if not email.endswith("@transelec.cl") and not body.forzar_email_no_transelec:
         raise HTTPException(
@@ -188,7 +190,7 @@ def api_altas_generar(
         "firstname": body.firstname,
         "lastname": body.lastname,
     }
-    content, filename = generar_csv_alta_bytes(datos, cat["cursos"], body.grupo.strip())
+    content, filename = generar_csv_alta_bytes(datos)
     return Response(
         content=content,
         media_type="text/csv",
@@ -238,5 +240,39 @@ async def api_matriz_generar(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=generic_error_detail(e, "generación matriz"))
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+@router.post("/asignacion/comparar")
+async def api_asignacion_comparar(
+    archivo_asignacion: UploadFile = File(...),
+    archivo_nomina: UploadFile = File(...),
+    current_user: models.User = Depends(require_permission("generador")),
+):
+    """Compara Asignación RH (Excel) vs Nómina LMS (CSV): quién falta en la nómina."""
+    temp_dir = tempfile.mkdtemp()
+    try:
+        path_asig = Path(temp_dir) / safe_planilla_filename(archivo_asignacion.filename)
+        path_nom = Path(temp_dir) / safe_csv_filename(archivo_nomina.filename)
+        path_asig.write_bytes(await read_upload_limited(archivo_asignacion))
+        path_nom.write_bytes(await read_upload_limited(archivo_nomina))
+
+        content, filename, stats = generar_reporte_asignacion_bytes(path_asig, path_nom)
+        headers = {
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Report-Stats": json.dumps(stats),
+        }
+        return Response(
+            content=content,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers=headers,
+        )
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=generic_error_detail(e, "comparación Asignación"))
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from database import Base
@@ -12,6 +12,14 @@ class User(Base):
     hashed_password = Column(String(255))
     role = Column(String(20), default="user")
     permissions_json = Column(String(2000), default="[]")
+    email = Column(String(255), nullable=True, default="")
+    nombre = Column(String(100), nullable=True, default="")
+    apellido = Column(String(100), nullable=True, default="")
+    must_change_password = Column(Boolean, default=False, nullable=False)
+    # local | oidc (Authentik / Google)
+    auth_provider = Column(String(20), nullable=False, default="local")
+    oidc_sub = Column(String(255), nullable=True, default="")
+    oidc_tenant = Column(String(50), nullable=True, default="")
 
 
 class AppData(Base):
@@ -20,7 +28,8 @@ class AppData(Base):
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String(50), index=True)
     module_name = Column(String(50), index=True)
-    payload_json = Column(String)
+    # Text: payloads JSON grandes (compatible SQLite / PostgreSQL / MySQL)
+    payload_json = Column(Text)
 
 
 class MoodleCourse(Base):

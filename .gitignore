@@ -1,10 +1,11 @@
 # Entornos virtuales Python
 __pycache__/
 *.py[cod]
-*$py.class
+*\.class
 venv/
 env/
 .env
+!.env.docker.example
 
 # Next.js / Node
 node_modules/
@@ -26,14 +27,12 @@ backend/cookies.txt
 *.xlsx
 *.xls
 !cursos bex Moodle.xlsx
+!cursos bex Moodle.xls
 backend/Joao_*.json
 *_db.json
-
-# Archivos de prueba / temporales en raíz
-prueba/
-mc_test.html
-antigravity_context.md
-HerramientasMas.zip
+respaldo_*.sql
+*.sql.dump
+test_sample_consulta.txt
 _zip_import/
 
 # Dependencias npm debug logs
@@ -41,7 +40,26 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Archivos de caché
+# Archivos de cache
 .vercel/
 .turbo/
 *.tsbuildinfo
+test_generador_local.py
+*.zip
+
+backend/data/
+
+# Logs locales de arranque
+logs/
+
+# Compresor de videos (binarios y datos locales)
+compresor_video/bin/ffmpeg.exe
+compresor_video/logs/
+compresor_video/temp/
+compresor_video/input/*
+!compresor_video/input/.gitkeep
+compresor_video/output/*
+!compresor_video/output/.gitkeep
+
+.vercel
+.env*

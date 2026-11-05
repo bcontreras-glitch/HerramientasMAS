@@ -13,7 +13,6 @@ from config import (
     MAX_VIDEO_UPLOAD_BYTES,
     VALID_MODULES,
 )
-
 _FILENAME_UNSAFE = re.compile(r"[^a-zA-Z0-9._-]+")
 
 
@@ -32,6 +31,47 @@ def safe_upload_filename(original: str | None) -> str:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Solo se permiten archivos Excel (.xlsx, .xls).",
+        )
+    safe_stem = _FILENAME_UNSAFE.sub("_", stem)[:80] or "upload"
+    return f"{safe_stem}.{ext}"
+
+
+def safe_csv_filename(original: str | None) -> str:
+    name = Path(original or "upload.csv").name
+    if name in (".", "..") or ".." in name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Nombre de archivo no válido.",
+        )
+    stem, dot, ext = name.rpartition(".")
+    if not dot:
+        stem, ext = name, "csv"
+    ext = ext.lower()
+    if ext != "csv":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Solo se permiten archivos CSV (.csv).",
+        )
+    safe_stem = _FILENAME_UNSAFE.sub("_", stem)[:80] or "upload"
+    return f"{safe_stem}.{ext}"
+
+
+def safe_planilla_filename(original: str | None) -> str:
+    """Excel o CSV para planillas de generador (Resiter, Transelec, etc.)."""
+    name = Path(original or "upload.csv").name
+    if name in (".", "..") or ".." in name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Nombre de archivo no válido.",
+        )
+    stem, dot, ext = name.rpartition(".")
+    if not dot:
+        stem, ext = name, "csv"
+    ext = ext.lower()
+    if ext not in ("csv", "xlsx", "xls", "xlsm"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Solo se permiten archivos CSV (.csv) o Excel (.xlsx, .xls, .xlsm).",
         )
     safe_stem = _FILENAME_UNSAFE.sub("_", stem)[:80] or "upload"
     return f"{safe_stem}.{ext}"
@@ -97,7 +137,14 @@ async def stream_video_upload_to_file(
     *,
     max_bytes: int | None = None,
 ) -> int:
-    limit = max_bytes if max_bytes is not None else MAX_VIDEO_UPLOAD_BYTES
+    """Guarda un video en disco. max_bytes=None usa MAX_VIDEO_UPLOAD_BYTES; 0 = sin límite."""
+    if max_bytes == 0:
+        limit: int | None = None
+    elif max_bytes is None:
+        limit = MAX_VIDEO_UPLOAD_BYTES
+    else:
+        limit = max_bytes
+
     dest.parent.mkdir(parents=True, exist_ok=True)
     total = 0
     with dest.open("wb") as handle:
@@ -106,7 +153,8 @@ async def stream_video_upload_to_file(
             if not chunk:
                 break
             total += len(chunk)
-            if total > limit:
+            if limit is not None and total > limit:
+                dest.unlink(missing_ok=True)
                 raise HTTPException(
                     status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                     detail=f"El video supera el límite de {limit // (1024 * 1024)} MB.",

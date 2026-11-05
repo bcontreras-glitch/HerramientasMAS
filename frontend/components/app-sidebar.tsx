@@ -12,10 +12,15 @@ import {
   LayoutGrid,
   LogOut,
   Users,
-  Film,
+  FileSpreadsheet,
+  Clapperboard,
+  Shield,
+  ClipboardList,
+  ChartColumn,
 } from "lucide-react"
 import { ThemeSettings } from "@/components/theme-settings"
 import { GeneradorNominaMenu } from "@/components/generador-nomina-menu"
+import { ManualDownloadButton } from "@/components/manual-download-button"
 import { cn } from "@/lib/utils"
 import { useAuth } from "./auth-provider"
 
@@ -33,6 +38,11 @@ const navItems: NavItem[] = [
   { icon: GraduationCap, label: "Capacitaciones Mod 1", href: "/capacitaciones", moduleName: "capacitaciones" },
   { icon: Link2, label: "Enlaces de Interes", href: "/enlaces", moduleName: "enlaces" },
   { icon: CalendarDays, label: "Calendario & Tareas", href: "/recordatorios", moduleName: "recordatorios" },
+  { icon: FileSpreadsheet, label: "Reporte Consulta Cursos", href: "/consulta-cursos", moduleName: "consulta_cursos" },
+  { icon: Users, label: "Usuarios Duplicados", href: "/usuarios-duplicados", moduleName: "usuarios_duplicados" },
+  { icon: Clapperboard, label: "Compresor MP4", href: "/compresor-videos", moduleName: "compresor_video" },
+  { icon: ClipboardList, label: "Evaluaciones Moodle", href: "/evaluaciones-moodle", moduleName: "evaluaciones_moodle" },
+  { icon: ChartColumn, label: "Análisis de Resultados", href: "/analisis-resultados", moduleName: "analisis_resultados" },
 ]
 
 function canAccessModule(
@@ -43,15 +53,8 @@ function canAccessModule(
   return user.permissions.includes(moduleName)
 }
 
-function isVideoPath(pathname: string) {
-  return pathname === "/generador/videos" || pathname.startsWith("/generador/videos/")
-}
-
 function isNominaPath(pathname: string) {
-  return (
-    pathname === "/generador" ||
-    (pathname.startsWith("/generador/") && !isVideoPath(pathname))
-  )
+  return pathname === "/generador" || pathname.startsWith("/generador/")
 }
 
 export function AppSidebar() {
@@ -66,16 +69,32 @@ export function AppSidebar() {
   })
 
   const showGenerador = canAccessModule(user, "generador")
-  const generadorActive = isNominaPath(pathname) || isVideoPath(pathname)
-  const videoActive = isVideoPath(pathname)
+  const generadorActive = isNominaPath(pathname)
 
   return (
     <aside className="relative z-[90] flex h-screen w-64 shrink-0 flex-col bg-sidebar border-r border-sidebar-border">
-      <div className="flex items-center gap-3 px-5 py-5 border-b border-sidebar-border">
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10">
-          <LayoutGrid className="h-5 w-5 text-primary" />
+      <div className="border-b border-sidebar-border px-5 py-5">
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10">
+            <LayoutGrid className="h-5 w-5 text-primary" />
+          </div>
+          <span className="text-base font-semibold text-sidebar-foreground">Herramientas</span>
         </div>
-        <span className="text-base font-semibold text-sidebar-foreground">Herramientas</span>
+        {(user.nombre || "").trim() ? (
+          <p
+            className="mt-3 text-lg font-semibold text-sidebar-foreground truncate"
+            title={`Hola, ${user.nombre}`}
+          >
+            Hola, {user.nombre}
+          </p>
+        ) : (
+          <p
+            className="mt-3 text-lg font-semibold text-sidebar-foreground/80 truncate"
+            title={`Hola, ${user.username}`}
+          >
+            Hola, {user.username}
+          </p>
+        )}
       </div>
 
       <nav className="flex-1 overflow-y-auto px-3 py-4">
@@ -112,20 +131,6 @@ export function AppSidebar() {
               </div>
               <ul className="space-y-1">
                 <GeneradorNominaMenu />
-                <li>
-                  <Link
-                    href="/generador/videos"
-                    className={cn(
-                      "flex w-full items-center gap-3 rounded-lg py-2.5 pl-6 pr-3 text-sm font-medium transition-colors",
-                      videoActive
-                        ? "bg-sidebar-accent text-primary"
-                        : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
-                    )}
-                  >
-                    <Film className="h-4 w-4 shrink-0" />
-                    Paquetes de Video
-                  </Link>
-                </li>
               </ul>
             </li>
           )}
@@ -142,8 +147,8 @@ export function AppSidebar() {
                   : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
               )}
             >
-              <Users className="h-5 w-5" />
-              Administrar Usuarios
+              <Shield className="h-5 w-5" />
+              Panel de Administrador
             </Link>
           )}
         </div>
@@ -151,6 +156,8 @@ export function AppSidebar() {
 
       <div className="space-y-1 border-t border-sidebar-border px-3 py-4">
         <ThemeSettings />
+
+        <ManualDownloadButton />
 
         <button
           onClick={logout}

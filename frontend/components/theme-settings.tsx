@@ -10,7 +10,7 @@ export function ThemeSettings() {
   const { resolvedTheme, themePreset, setTheme, setThemePreset } = useTheme()
 
   return (
-    <Popover modal={false}>
+    <Popover>
       <PopoverTrigger asChild>
         <button
           type="button"
@@ -25,7 +25,6 @@ export function ThemeSettings() {
         side="right"
         align="end"
         sideOffset={12}
-        collisionPadding={16}
         className="z-[200] w-80 p-0 overflow-hidden"
       >
         <div className="border-b border-border px-4 py-3">
